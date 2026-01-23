@@ -13,7 +13,7 @@ import type { BaseLogger } from 'vintasend/dist/services/loggers/base-logger';
  * This is necessary for bot deployments where templates are embedded as constants
  * rather than separate files.
  */
-export class InlineTemplateRenderer<Config extends BaseNotificationTypeConfig>
+export class PugInlineEmailTemplateRenderer<Config extends BaseNotificationTypeConfig>
   implements BaseEmailTemplateRenderer<Config>
 {
   private templates: Record<string, string>;
@@ -71,8 +71,8 @@ export class InlineTemplateRenderer<Config extends BaseNotificationTypeConfig>
   }
 }
 
-export class InlineTemplateRendererFactory<Config extends BaseNotificationTypeConfig> {
-  create(generatedTemplates: Record<string, string>): InlineTemplateRenderer<Config> {
-    return new InlineTemplateRenderer<Config>(generatedTemplates);
+export class PugInlineEmailTemplateRendererFactory<Config extends BaseNotificationTypeConfig> {
+  create(generatedTemplates: Record<string, string>): PugInlineEmailTemplateRenderer<Config> {
+    return new PugInlineEmailTemplateRenderer<Config>(generatedTemplates);
   }
 }

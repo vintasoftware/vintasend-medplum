@@ -22,7 +22,8 @@ function findPugFiles(dir: string, baseDir: string, files: Map<string, string> =
       // Read the pug file content
       const content = fs.readFileSync(fullPath, 'utf-8');
       // Use relative path from base directory as the key
-      const relativePath = path.relative(baseDir, fullPath);
+      // Normalize to POSIX-style path (forward slashes) for cross-platform consistency
+      const relativePath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
       files.set(relativePath, content);
     }
   }
@@ -69,10 +70,18 @@ function compilePugTemplates(inputDir: string = './templates', outputFile: strin
 // Parse command line arguments
 const args = process.argv.slice(2);
 
-if (args.length < 2) {
-  console.error('Usage: ts-node compile-pug-templates.ts <input-directory> <output-file>');
-  console.error('Example: ts-node compile-pug-templates.ts ./templates ./compiled-templates.json');
-  process.exit(1);
+if (args.includes('--help') || args.includes('-h')) {
+  console.log('Usage: compile-pug-templates [input-directory] [output-file]');
+  console.log('');
+  console.log('Arguments:');
+  console.log('  input-directory  Directory containing .pug templates (default: ./templates)');
+  console.log('  output-file      Output JSON file path (default: compiled-templates.json)');
+  console.log('');
+  console.log('Examples:');
+  console.log('  compile-pug-templates');
+  console.log('  compile-pug-templates ./templates');
+  console.log('  compile-pug-templates ./templates ./compiled-templates.json');
+  process.exit(0);
 }
 
 const [inputDir, outputFile] = args;

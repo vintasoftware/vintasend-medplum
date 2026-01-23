@@ -11,7 +11,7 @@ This implementation uses FHIR (Fast Healthcare Interoperability Resources) stand
 - **MedplumNotificationBackend**: Stores notifications as FHIR `Communication` resources
 - **MedplumNotificationAdapter**: Sends email notifications via Medplum's email API
 - **MedplumAttachmentManager**: Manages file attachments using FHIR `Binary` and `Media` resources
-- **InlineTemplateRenderer**: Renders Pug email templates from pre-compiled JSON (ideal for production)
+- **PugInlineEmailTemplateRenderer**: Renders Pug email templates from pre-compiled JSON (ideal for production)
 - **MedplumLogger**: Simple console-based logger
 
 ## Quick Start
@@ -29,7 +29,7 @@ import { MedplumClient } from '@medplum/core';
 import { 
   MedplumNotificationBackend, 
   MedplumNotificationAdapter,
-  InlineTemplateRenderer,
+  PugInlineEmailTemplateRenderer,
   MedplumLogger 
 } from 'vintasend-medplum';
 import { NotificationService } from 'vintasend';
@@ -43,7 +43,7 @@ const medplum = new MedplumClient({
 });
 
 // Create services
-const renderer = new InlineTemplateRenderer(compiledTemplates);
+const renderer = new PugInlineEmailTemplateRenderer(compiledTemplates);
 const adapter = new MedplumNotificationAdapter(medplum, renderer);
 const backend = new MedplumNotificationBackend(medplum);
 const logger = new MedplumLogger();
@@ -168,12 +168,22 @@ templates/
 Run the compilation script using npx:
 
 ```bash
-npx compile-pug-templates <input-directory> <output-file>
+npx compile-pug-templates [input-directory] [output-file]
 ```
 
-Example:
+Both arguments are optional:
+- `input-directory`: Directory containing .pug templates (default: `./templates`)
+- `output-file`: Output JSON file path (default: `compiled-templates.json`)
+
+Examples:
 ```bash
-# Compile all .pug files from ./templates to ./src/compiled-templates.json
+# Use default values (./templates → compiled-templates.json)
+npx compile-pug-templates
+
+# Specify only input directory (output to compiled-templates.json)
+npx compile-pug-templates ./email-templates
+
+# Specify both arguments
 npx compile-pug-templates ./templates ./src/compiled-templates.json
 ```
 
@@ -197,11 +207,11 @@ This generates a JSON file where keys are relative paths and values are template
 **Step 3: Import and Use Compiled Templates**
 
 ```typescript
-import { InlineTemplateRenderer } from 'vintasend-medplum';
+import { PugInlineEmailTemplateRenderer } from 'vintasend-medplum';
 import compiledTemplates from './compiled-templates.json';
 
 // Create the template renderer with compiled templates
-const templateRenderer = new InlineTemplateRenderer(compiledTemplates);
+const templateRenderer = new PugInlineEmailTemplateRenderer(compiledTemplates);
 
 // Use with notification adapter
 const adapter = new MedplumNotificationAdapter(medplum, templateRenderer);
@@ -558,10 +568,10 @@ constructor(
 **Key Methods:**
 - `send(notification, context)` - Send an email notification with attachments
 
-### InlineTemplateRenderer
+### PugInlineEmailTemplateRenderer
 
 ```typescript
-class InlineTemplateRenderer<Config extends BaseNotificationTypeConfig>
+class PugInlineEmailTemplateRenderer<Config extends BaseNotificationTypeConfig>
   implements BaseEmailTemplateRenderer<Config>
 ```
 
@@ -582,7 +592,7 @@ constructor(generatedTemplates: Record<string, string>)
 ```typescript
 import compiledTemplates from './compiled-templates.json';
 
-const renderer = new InlineTemplateRenderer(compiledTemplates);
+const renderer = new PugInlineEmailTemplateRenderer(compiledTemplates);
 const adapter = new MedplumNotificationAdapter(medplum, renderer);
 ```
 
