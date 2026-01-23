@@ -15,9 +15,10 @@ export class MedplumNotificationAdapter<
   constructor(
     private medplum: MedplumClient,
     templateRenderer: TemplateRenderer,
+    enqueueNotifications: boolean,
   ) {
     const notificationType = 'EMAIL';
-    super(templateRenderer, notificationType, false);
+    super(templateRenderer, notificationType, enqueueNotifications);
   }
 
   get supportsAttachments(): boolean {
@@ -82,6 +83,22 @@ export class MedplumNotificationAdapter<
           contentType: att.contentType,
         };
       })
+    );
+  }
+}
+
+
+
+export class MedplumNotificationAdapterFactory<Config extends BaseNotificationTypeConfig> {
+  create<TemplateRenderer extends BaseEmailTemplateRenderer<Config>>(
+    medplum: MedplumClient,
+    templateRenderer: TemplateRenderer,
+    enqueueNotifications: boolean,
+  ) {
+    return new MedplumNotificationAdapter<TemplateRenderer, Config>(
+      medplum,
+      templateRenderer,
+      enqueueNotifications,
     );
   }
 }

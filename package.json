@@ -1,6 +1,6 @@
 {
   "name": "vintasend-medplum",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "",
   "main": "dist/index.js",
   "scripts": {
