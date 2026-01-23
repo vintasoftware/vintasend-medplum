@@ -5,11 +5,6 @@ import type { DatabaseNotification } from 'vintasend/dist/types/notification';
 import type { BaseNotificationTypeConfig } from 'vintasend/dist/types/notification-type-config';
 
 
-function getTemplateNameFromPath(path: string): string {
-  const parts = path.split('/');
-  return parts[parts.length - 1];
-}
-
 /**
  * Custom email template renderer that compiles Pug templates from strings
  * instead of reading from file paths.
