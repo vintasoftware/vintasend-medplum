@@ -1,7 +1,7 @@
 import type { ContextGenerator } from 'vintasend/dist/services/notification-context-registry';
 import type { DatabaseNotification } from 'vintasend/dist/types/notification';
 import type { BaseLogger } from 'vintasend/dist/services/loggers/base-logger';
-import { InlineTemplateRendererFactory, InlineTemplateRenderer } from '../pug-inline-email-template-renderer';
+import { PugInlineEmailTemplateRendererFactory, PugInlineEmailTemplateRenderer } from '../pug-inline-email-template-renderer';
 
 type MockConfig = {
   ContextMap: { testContext: ContextGenerator };
@@ -9,8 +9,8 @@ type MockConfig = {
   UserIdType: string;
 };
 
-describe('InlineTemplateRenderer', () => {
-  let renderer: InlineTemplateRenderer<MockConfig>;
+describe('PugInlineEmailTemplateRenderer', () => {
+  let renderer: PugInlineEmailTemplateRenderer<MockConfig>;
   let mockNotification: DatabaseNotification<MockConfig>;
 
   // Define template strings inline (plain text mode with interpolation)
@@ -27,7 +27,7 @@ describe('InlineTemplateRenderer', () => {
   };
 
   beforeEach(() => {
-    renderer = new InlineTemplateRendererFactory<MockConfig>().create(templates);
+    renderer = new PugInlineEmailTemplateRendererFactory<MockConfig>().create(templates);
     mockNotification = {
       id: '123',
       notificationType: 'EMAIL' as const,
@@ -135,7 +135,7 @@ describe('InlineTemplateRenderer', () => {
   });
 
   it('should create renderer with empty templates object', () => {
-    const emptyRenderer = new InlineTemplateRendererFactory<MockConfig>().create({});
+    const emptyRenderer = new PugInlineEmailTemplateRendererFactory<MockConfig>().create({});
     expect(emptyRenderer).toBeDefined();
   });
 
@@ -168,6 +168,6 @@ describe('InlineTemplateRenderer', () => {
     };
 
     await expect(renderer.render(notification, { undefinedVariable: undefined })).rejects.toThrow();
-    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('[InlineTemplateRenderer] Error rendering templates'));
+    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('[PugInlineEmailTemplateRenderer] Error rendering templates'));
   });
 });
