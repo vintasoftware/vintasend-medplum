@@ -26,12 +26,30 @@ export class InlineTemplateRenderer<Config extends BaseNotificationTypeConfig>
     context: JsonObject
   ): Promise<{ subject: string; body: string }> {
     try {
+      // Check if body template is provided
+      const bodyTemplateKey = notification.bodyTemplate;
+      if (!bodyTemplateKey) {
+        throw new Error('Body template is required');
+      }
+      if (!(bodyTemplateKey in this.templates)) {
+        throw new Error(`Body template "${bodyTemplateKey}" not found in templates`);
+      }
+
+      // Check if subject template is provided
+      const subjectTemplateKey = notification.subjectTemplate;
+      if (!subjectTemplateKey) {
+        throw new Error('Subject template is required');
+      }
+      if (!(subjectTemplateKey in this.templates)) {
+        throw new Error(`Subject template "${subjectTemplateKey}" not found in templates`);
+      }
+
       // Compile and render the body template from string
-      const bodyTemplate = pug.compile(this.templates[notification.bodyTemplate || ''] || '');
+      const bodyTemplate = pug.compile(this.templates[bodyTemplateKey]);
       const body = bodyTemplate(context);
 
       // Compile and render the subject template from string
-      const subjectTemplate = pug.compile(this.templates[notification.subjectTemplate || ''] || '');
+      const subjectTemplate = pug.compile(this.templates[subjectTemplateKey]);
       const subject = subjectTemplate(context);
 
       return { subject, body };
