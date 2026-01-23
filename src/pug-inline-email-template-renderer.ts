@@ -34,40 +34,49 @@ export class PugInlineEmailTemplateRenderer<Config extends BaseNotificationTypeC
     notification: DatabaseNotification<Config>,
     context: JsonObject
   ): Promise<{ subject: string; body: string }> {
+    // Check if body template is provided
+    const bodyTemplateKey = notification.bodyTemplate;
+    if (!bodyTemplateKey) {
+      throw new Error('Body template is required');
+    }
+    if (!(bodyTemplateKey in this.templates)) {
+      throw new Error(`Body template "${bodyTemplateKey}" not found in templates`);
+    }
+
+    // Check if subject template is provided
+    const subjectTemplateKey = notification.subjectTemplate;
+    if (!subjectTemplateKey) {
+      throw new Error('Subject template is required');
+    }
+    if (!(subjectTemplateKey in this.templates)) {
+      throw new Error(`Subject template "${subjectTemplateKey}" not found in templates`);
+    }
+
+    let body: string;
     try {
-      // Check if body template is provided
-      const bodyTemplateKey = notification.bodyTemplate;
-      if (!bodyTemplateKey) {
-        throw new Error('Body template is required');
-      }
-      if (!(bodyTemplateKey in this.templates)) {
-        throw new Error(`Body template "${bodyTemplateKey}" not found in templates`);
-      }
-
-      // Check if subject template is provided
-      const subjectTemplateKey = notification.subjectTemplate;
-      if (!subjectTemplateKey) {
-        throw new Error('Subject template is required');
-      }
-      if (!(subjectTemplateKey in this.templates)) {
-        throw new Error(`Subject template "${subjectTemplateKey}" not found in templates`);
-      }
-
       // Compile and render the body template from string
       const bodyTemplate = pug.compile(this.templates[bodyTemplateKey]);
-      const body = bodyTemplate(context);
-
-      // Compile and render the subject template from string
-      const subjectTemplate = pug.compile(this.templates[subjectTemplateKey]);
-      const subject = subjectTemplate(context);
-
-      return { subject, body };
+      body = bodyTemplate(context);
     } catch (error) {
       if (this.logger) {
-        this.logger.error(`[InlineTemplateRenderer] Error rendering templates: ${error}`);
+        this.logger.error('[InlineTemplateRenderer] Error rendering body template');
       }
       throw error;
     }
+
+    let subject: string;
+    try {
+      // Compile and render the subject template from string
+      const subjectTemplate = pug.compile(this.templates[subjectTemplateKey]);
+      subject = subjectTemplate(context);
+    } catch (error) {
+      if (this.logger) {
+        this.logger.error('[InlineTemplateRenderer] Error rendering subject template');
+      }
+      throw error;
+    }
+
+    return { subject, body };
   }
 }
 
