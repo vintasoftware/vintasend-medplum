@@ -3,6 +3,7 @@ import { BaseEmailTemplateRenderer } from 'vintasend';
 import type { JsonObject } from 'vintasend/dist/types/json-values';
 import type { DatabaseNotification } from 'vintasend/dist/types/notification';
 import type { BaseNotificationTypeConfig } from 'vintasend/dist/types/notification-type-config';
+import type { BaseLogger } from 'vintasend/dist/services/loggers/base-logger';
 
 
 /**
@@ -16,9 +17,17 @@ export class InlineTemplateRenderer<Config extends BaseNotificationTypeConfig>
   implements BaseEmailTemplateRenderer<Config>
 {
   private templates: Record<string, string>;
+  private logger: BaseLogger | null = null;
 
   constructor(generatedTemplates: Record<string, string>) {
     this.templates = generatedTemplates;
+  }
+
+  /**
+   * Inject logger (called by VintaSend when logger exists)
+   */
+  injectLogger(logger: BaseLogger): void {
+    this.logger = logger;
   }
 
   async render(
@@ -54,15 +63,16 @@ export class InlineTemplateRenderer<Config extends BaseNotificationTypeConfig>
 
       return { subject, body };
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('[InlineTemplateRenderer] Error rendering templates:', error);
+      if (this.logger) {
+        this.logger.error(`[InlineTemplateRenderer] Error rendering templates: ${error}`);
+      }
       throw error;
     }
   }
 }
 
 export class InlineTemplateRendererFactory<Config extends BaseNotificationTypeConfig> {
-  create(generatedTemplates: Record<string, string>): BaseEmailTemplateRenderer<Config> {
+  create(generatedTemplates: Record<string, string>): InlineTemplateRenderer<Config> {
     return new InlineTemplateRenderer<Config>(generatedTemplates);
   }
 }

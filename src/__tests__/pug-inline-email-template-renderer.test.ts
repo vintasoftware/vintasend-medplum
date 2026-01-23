@@ -1,7 +1,7 @@
 import type { ContextGenerator } from 'vintasend/dist/services/notification-context-registry';
 import type { DatabaseNotification } from 'vintasend/dist/types/notification';
-import { InlineTemplateRendererFactory } from '../pug-inline-email-template-renderer';
-import type { BaseEmailTemplateRenderer } from 'vintasend';
+import type { BaseLogger } from 'vintasend/dist/services/loggers/base-logger';
+import { InlineTemplateRendererFactory, InlineTemplateRenderer } from '../pug-inline-email-template-renderer';
 
 type MockConfig = {
   ContextMap: { testContext: ContextGenerator };
@@ -10,7 +10,7 @@ type MockConfig = {
 };
 
 describe('InlineTemplateRenderer', () => {
-  let renderer: BaseEmailTemplateRenderer<MockConfig>;
+  let renderer: InlineTemplateRenderer<MockConfig>;
   let mockNotification: DatabaseNotification<MockConfig>;
 
   // Define template strings inline (plain text mode with interpolation)
@@ -137,5 +137,37 @@ describe('InlineTemplateRenderer', () => {
   it('should create renderer with empty templates object', () => {
     const emptyRenderer = new InlineTemplateRendererFactory<MockConfig>().create({});
     expect(emptyRenderer).toBeDefined();
+  });
+
+  it('should support logger injection', () => {
+    const mockLogger: BaseLogger = {
+      info: jest.fn(),
+      error: jest.fn(),
+      warn: jest.fn(),
+    };
+
+    renderer.injectLogger(mockLogger);
+
+    // biome-ignore lint/complexity/useLiteralKeys: accessing private attribute
+    expect((renderer as any).logger).toBe(mockLogger);
+  });
+
+  it('should use logger when rendering fails', async () => {
+    const mockLogger: BaseLogger = {
+      info: jest.fn(),
+      error: jest.fn(),
+      warn: jest.fn(),
+    };
+
+    renderer.injectLogger(mockLogger);
+
+    const notification = {
+      ...mockNotification,
+      bodyTemplate: 'invalid-template',
+      subjectTemplate: 'invalid-subject',
+    };
+
+    await expect(renderer.render(notification, { undefinedVariable: undefined })).rejects.toThrow();
+    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('[InlineTemplateRenderer] Error rendering templates'));
   });
 });
