@@ -168,6 +168,6 @@ describe('PugInlineEmailTemplateRenderer', () => {
     };
 
     await expect(renderer.render(notification, { undefinedVariable: undefined })).rejects.toThrow();
-    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('[PugInlineEmailTemplateRenderer] Error rendering templates'));
+    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('[PugInlineEmailTemplateRenderer] Error rendering body template'));
   });
 });

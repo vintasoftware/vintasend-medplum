@@ -59,7 +59,7 @@ export class PugInlineEmailTemplateRenderer<Config extends BaseNotificationTypeC
       body = bodyTemplate(context);
     } catch (error) {
       if (this.logger) {
-        this.logger.error('[InlineTemplateRenderer] Error rendering body template');
+        this.logger.error('[PugInlineEmailTemplateRenderer] Error rendering body template');
       }
       throw error;
     }
@@ -71,7 +71,7 @@ export class PugInlineEmailTemplateRenderer<Config extends BaseNotificationTypeC
       subject = subjectTemplate(context);
     } catch (error) {
       if (this.logger) {
-        this.logger.error('[InlineTemplateRenderer] Error rendering subject template');
+        this.logger.error('[PugInlineEmailTemplateRenderer] Error rendering subject template');
       }
       throw error;
     }

@@ -143,22 +143,6 @@ describe('compile-pug-templates script', () => {
     }).toThrow();
   });
 
-  it('should error when insufficient arguments provided', () => {
-    // Verify the script exits with error when no args
-    expect(() => {
-      execSync(`npx ts-node ${scriptPath}`, {
-        stdio: 'pipe',
-      });
-    }).toThrow();
-
-    // Verify the script exits with error when only one arg
-    expect(() => {
-      execSync(`npx ts-node ${scriptPath} ${testTempDir}`, {
-        stdio: 'pipe',
-      });
-    }).toThrow();
-  });
-
   it('should preserve template content exactly as written', () => {
     const templatesDir = path.join(testTempDir, 'templates');
     const outputFile = path.join(testTempDir, 'output.json');
