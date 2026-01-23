@@ -52,7 +52,6 @@ describe('MedplumNotificationBackend - Attachments', () => {
 
   const createMockCommunication = (overrides = {}): Communication => ({
     resourceType: 'Communication',
-    id: '123',
     status: 'preparation',
     meta: {
       tag: [{ code: 'notification' }],

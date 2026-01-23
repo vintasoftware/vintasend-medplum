@@ -40,9 +40,8 @@ describe('MedplumNotificationBackend', () => {
     backend.injectAttachmentManager(mockAttachmentManager);
   });
 
-  const createMockCommunication = (overrides = {}): Communication & { id: string } => ({
+  const createMockCommunication = (overrides = {}): Communication => ({
     resourceType: 'Communication',
-    id: '123',
     status: 'in-progress',
     meta: {
       tag: [
@@ -434,7 +433,7 @@ describe('MedplumNotificationBackend', () => {
 
   describe('serializeNotification', () => {
     it('should correctly serialize regular notification', () => {
-      const mockCommunication = createMockCommunication();
+      const mockCommunication = createMockCommunication({ id: '123' });
 
       const result = backend['mapToDatabaseNotification'](mockCommunication as any);
 
@@ -448,6 +447,7 @@ describe('MedplumNotificationBackend', () => {
 
     it('should correctly serialize one-off notification', () => {
       const mockCommunication = createMockCommunication({
+        id: '123',
         recipient: undefined,
         extension: [
           {
@@ -477,7 +477,7 @@ describe('MedplumNotificationBackend', () => {
     });
 
     it('should handle notification with all required fields', () => {
-      const mockCommunication = createMockCommunication();
+      const mockCommunication = createMockCommunication({ id: '123' });
       const result = backend['mapToDatabaseNotification'](mockCommunication as any);
 
       expect(result).toMatchObject({
