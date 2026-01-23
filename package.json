@@ -1,6 +1,6 @@
 {
   "name": "vintasend-medplum",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "description": "",
   "main": "dist/index.js",
   "scripts": {
@@ -8,26 +8,35 @@
     "prepublishOnly": "npm run build",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "compile-templates": "ts-node src/scripts/compile-pug-templates.ts"
   },
   "files": [
-    "dist"
+    "dist",
+    "src/scripts/compile-pug-templates.ts"
   ],
+  "bin": {
+    "compile-pug-templates": "dist/scripts/compile-pug-templates.js"
+  },
   "author": "Hugo Bessa",
   "license": "MIT",
   "peerDependencies": {
     "@medplum/core": "^5.0.10",
     "@medplum/fhirtypes": "^5.0.10",
     "pdfmake": "^0.2.23",
-    "vintasend": "^0.4.0"
+    "pug": "^3.0.3",
+    "vintasend": "^0.4.3"
   },
   "devDependencies": {
     "@medplum/definitions": "^5.0.10",
     "@medplum/mock": "^5.0.10",
     "@types/jest": "^30.0.0",
+    "@types/node": "^22.0.0",
     "@types/pdfmake": "^0.2.12",
+    "@types/pug": "^2.0.10",
     "jest": "^30.2.0",
     "ts-jest": "^29.4.6",
+    "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
 }

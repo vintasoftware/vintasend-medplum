@@ -1,20 +1,19 @@
 import { MockClient } from '@medplum/mock';
 import type { Media, Binary } from '@medplum/fhirtypes';
 import { MedplumAttachmentManager } from '../medplum-attachment-manager';
-import { Readable } from 'node:stream';
 
 type MediaWithId = Media & { id: string };
 type BinaryWithId = Binary & { id: string };
 
 /**
  * Tests for MedplumAttachmentManager.
- * 
+ *
  * NOTE: MockClient from @medplum/mock runs operations in-memory and is NOT a Jest mock.
  * To verify method calls, use jest.spyOn() instead of treating it as a mock:
- * 
+ *
  * ✅ Correct: const spy = jest.spyOn(medplumClient, 'createResource').mockResolvedValue({})
  * ❌ Wrong:   medplumClient.createResource.mockResolvedValue({})
- * 
+ *
  * The test.setup.ts file configures the MockClient with proper FHIR search parameters
  * to enable filtering in tests.
  */

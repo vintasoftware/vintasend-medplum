@@ -11,7 +11,60 @@ This implementation uses FHIR (Fast Healthcare Interoperability Resources) stand
 - **MedplumNotificationBackend**: Stores notifications as FHIR `Communication` resources
 - **MedplumNotificationAdapter**: Sends email notifications via Medplum's email API
 - **MedplumAttachmentManager**: Manages file attachments using FHIR `Binary` and `Media` resources
+- **PugInlineEmailTemplateRenderer**: Renders Pug email templates from pre-compiled JSON (ideal for production)
 - **MedplumLogger**: Simple console-based logger
+
+## Quick Start
+
+```bash
+# Install the package
+npm install vintasend-medplum @medplum/core
+
+# Compile your Pug templates
+npx compile-pug-templates ./templates ./src/compiled-templates.json
+```
+
+```typescript
+import { MedplumClient } from '@medplum/core';
+import { 
+  MedplumNotificationBackend, 
+  MedplumNotificationAdapter,
+  PugInlineEmailTemplateRenderer,
+  MedplumLogger 
+} from 'vintasend-medplum';
+import { NotificationService } from 'vintasend';
+import compiledTemplates from './compiled-templates.json';
+
+// Initialize Medplum client
+const medplum = new MedplumClient({
+  baseUrl: 'https://api.medplum.com',
+  clientId: 'your-client-id',
+  clientSecret: 'your-client-secret',
+});
+
+// Create services
+const renderer = new PugInlineEmailTemplateRenderer(compiledTemplates);
+const adapter = new MedplumNotificationAdapter(medplum, renderer);
+const backend = new MedplumNotificationBackend(medplum);
+const logger = new MedplumLogger();
+
+// Initialize notification service
+const notificationService = new NotificationService(backend, [adapter], logger);
+
+// Send a notification
+await notificationService.createNotification({
+  userId: 'Patient/123',
+  notificationType: 'EMAIL',
+  contextName: 'welcome',
+  contextParameters: { firstName: 'John' },
+  title: 'Welcome!',
+  bodyTemplate: 'welcome.pug',
+  subjectTemplate: 'subjects/welcome.pug',
+  sendAfter: new Date(),
+});
+
+await notificationService.processPendingNotifications();
+```
 
 ## How It Works
 
@@ -94,6 +147,76 @@ npm install vintasend-medplum @medplum/core
 
 ## Setup
 
+### Template Compilation
+
+VintaSend Medplum uses pre-compiled Pug email templates that are embedded in your application as JSON. This approach ensures templates are bundled with your code and don't require file system access at runtime.
+
+**Step 1: Organize Your Templates**
+
+Create a directory structure for your templates:
+```
+templates/
+  welcome.pug
+  password-reset.pug
+  notifications/
+    order-confirmation.pug
+    shipment-update.pug
+```
+
+**Step 2: Compile Templates**
+
+Run the compilation script using npx:
+
+```bash
+npx compile-pug-templates [input-directory] [output-file]
+```
+
+Both arguments are optional:
+- `input-directory`: Directory containing .pug templates (default: `./templates`)
+- `output-file`: Output JSON file path (default: `compiled-templates.json`)
+
+Examples:
+```bash
+# Use default values (./templates → compiled-templates.json)
+npx compile-pug-templates
+
+# Specify only input directory (output to compiled-templates.json)
+npx compile-pug-templates ./email-templates
+
+# Specify both arguments
+npx compile-pug-templates ./templates ./src/compiled-templates.json
+```
+
+Or add it to your package.json scripts:
+```json
+{
+  "scripts": {
+    "compile-templates": "compile-pug-templates ./templates ./src/compiled-templates.json"
+  }
+}
+```
+
+This generates a JSON file where keys are relative paths and values are template contents:
+```json
+{
+  "welcome.pug": "doctype html\nhtml\n  body\n    h1 Welcome {{firstName}}!",
+  "notifications/order-confirmation.pug": "doctype html\n..."
+}
+```
+
+**Step 3: Import and Use Compiled Templates**
+
+```typescript
+import { PugInlineEmailTemplateRenderer } from 'vintasend-medplum';
+import compiledTemplates from './compiled-templates.json';
+
+// Create the template renderer with compiled templates
+const templateRenderer = new PugInlineEmailTemplateRenderer(compiledTemplates);
+
+// Use with notification adapter
+const adapter = new MedplumNotificationAdapter(medplum, templateRenderer);
+```
+
 ### Basic Configuration
 
 ```typescript
@@ -150,6 +273,56 @@ const backend = new MedplumNotificationBackend(medplum, {
 ```
 
 ## Usage Examples
+
+### Configuring Templates
+
+When creating notifications, reference your templates using the same paths used during compilation:
+
+```typescript
+// If you compiled templates/welcome.pug
+await notificationService.createNotification({
+  userId: 'Patient/123',
+  notificationType: 'EMAIL',
+  contextName: 'user-welcome',
+  contextParameters: {
+    firstName: 'John',
+    lastName: 'Doe',
+  },
+  title: 'Welcome to our platform!',
+  bodyTemplate: 'welcome.pug',           // Path from compiled templates
+  subjectTemplate: 'subjects/welcome.pug', // Can be in subdirectories
+  sendAfter: new Date(),
+});
+
+// If you compiled templates/notifications/order-confirmation.pug
+await notificationService.createNotification({
+  userId: 'Patient/456',
+  notificationType: 'EMAIL',
+  contextName: 'order-confirmation',
+  contextParameters: {
+    orderNumber: '12345',
+    totalAmount: '$99.99',
+  },
+  title: 'Order Confirmation',
+  bodyTemplate: 'notifications/order-confirmation.pug',
+  subjectTemplate: 'notifications/subjects/order-confirmation.pug',
+  sendAfter: new Date(),
+});
+```
+
+**Template Example (welcome.pug):**
+```pug
+doctype html
+html
+  head
+    title Welcome
+  body
+    h1 Welcome #{firstName} #{lastName}!
+    p Thank you for joining our platform.
+    p 
+      | If you have any questions, feel free to 
+      a(href="mailto:support@example.com") contact us
+```
 
 ### Sending a Simple Notification
 
@@ -395,6 +568,34 @@ constructor(
 **Key Methods:**
 - `send(notification, context)` - Send an email notification with attachments
 
+### PugInlineEmailTemplateRenderer
+
+```typescript
+class PugInlineEmailTemplateRenderer<Config extends BaseNotificationTypeConfig>
+  implements BaseEmailTemplateRenderer<Config>
+```
+
+Template renderer that compiles Pug templates from pre-compiled JSON strings instead of reading from file paths. This is ideal for production deployments where templates are embedded in the application.
+
+**Constructor:**
+```typescript
+constructor(generatedTemplates: Record<string, string>)
+```
+
+**Parameters:**
+- `generatedTemplates` - Object mapping template paths to template content strings (generated by `compile-pug-templates` script)
+
+**Key Methods:**
+- `render(notification, context)` - Compile and render both subject and body templates using the notification's template paths
+
+**Example:**
+```typescript
+import compiledTemplates from './compiled-templates.json';
+
+const renderer = new PugInlineEmailTemplateRenderer(compiledTemplates);
+const adapter = new MedplumNotificationAdapter(medplum, renderer);
+```
+
 ### MedplumAttachmentManager
 
 ```typescript
@@ -430,7 +631,70 @@ Provides access to files stored in FHIR Binary resources.
 
 ## Best Practices
 
-### 1. Use FHIR References Consistently
+### 1. Template Organization
+
+Organize your templates in a clear directory structure:
+
+```
+templates/
+  subjects/           # Email subject templates
+    welcome.pug
+    order-confirmation.pug
+  bodies/            # Or organize by feature
+    welcome.pug
+    order-confirmation.pug
+  notifications/     # Group related templates
+    orders/
+      confirmation.pug
+      shipped.pug
+    users/
+      welcome.pug
+      password-reset.pug
+```
+
+### 2. Template Naming Conventions
+
+Use consistent, descriptive names:
+```typescript
+// ✅ Good - clear and descriptive
+bodyTemplate: 'notifications/orders/confirmation.pug'
+subjectTemplate: 'subjects/order-confirmation.pug'
+
+// ❌ Bad - unclear purpose
+bodyTemplate: 'template1.pug'
+subjectTemplate: 'subj.pug'
+```
+
+### 3. Template Variables
+
+Document the expected context variables in each template:
+
+```pug
+//- templates/welcome.pug
+//- Expected variables: firstName, lastName, loginUrl
+doctype html
+html
+  body
+    h1 Welcome #{firstName} #{lastName}!
+    a(href=loginUrl) Login to your account
+```
+
+### 4. Compilation in Build Process
+
+Add template compilation to your build pipeline:
+
+```json
+{
+  "scripts": {
+    "compile-templates": "compile-pug-templates ./templates ./src/compiled-templates.json",
+    "build": "npm run compile-templates && tsc"
+  }
+}
+```
+
+This ensures templates are always compiled before building your application.
+
+### 5. Use FHIR References Consistently
 
 Always use proper FHIR reference format for user IDs:
 
@@ -444,7 +708,7 @@ userId: '123'
 userId: 'user-456'
 ```
 
-### 2. Configure Custom Extension URLs
+### 6. Configure Custom Extension URLs
 
 Use your own domain for extension URLs in production:
 
@@ -454,7 +718,7 @@ const backend = new MedplumNotificationBackend(medplum, {
 });
 ```
 
-### 3. Handle Large Attachments Carefully
+### 7. Handle Large Attachments Carefully
 
 For large files, consider:
 - Using file size limits
@@ -469,7 +733,7 @@ if (buffer.length > maxSize) {
 }
 ```
 
-### 4. Clean Up Orphaned Files
+### 8. Clean Up Orphaned Files
 
 Regularly run cleanup to remove orphaned attachment files:
 
@@ -483,7 +747,7 @@ for (const file of orphaned) {
 }
 ```
 
-### 5. Use Pagination
+### 9. Use Pagination
 
 Always paginate when fetching large result sets:
 
