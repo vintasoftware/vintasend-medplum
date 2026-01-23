@@ -1,7 +1,6 @@
 import { MockClient } from '@medplum/mock';
 import type { Communication, Media, Binary } from '@medplum/fhirtypes';
 import { MedplumNotificationBackend } from '../medplum-backend';
-import type { BaseAttachmentManager } from 'vintasend/dist/services/attachment-manager/base-attachment-manager';
 import type {
   AttachmentFile,
   NotificationAttachment,
@@ -388,7 +387,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
       };
 
       // Create existing media resource
-      const existingMedia = await medplumClient.createResource(mockMedia);
+      await medplumClient.createResource(mockMedia);
 
       // Mock calculateChecksum to return same checksum as existing media
       (mockAttachmentManager.calculateChecksum as any).mockResolvedValue('abc123');
@@ -405,13 +404,13 @@ describe('MedplumNotificationBackend - Attachments', () => {
     });
 
     it('should batch checksum lookups for multiple attachments', async () => {
-      const existingMedia1 = await medplumClient.createResource({
+      await medplumClient.createResource({
         ...mockMedia,
         id: 'media-existing-1',
         identifier: [{ system: 'checksum', value: 'checksum1' }],
       });
 
-      const existingMedia2 = await medplumClient.createResource({
+      await medplumClient.createResource({
         ...mockMedia,
         id: 'media-existing-2',
         identifier: [{ system: 'checksum', value: 'checksum2' }],
@@ -470,7 +469,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
         id: 'media-ref-1',
       });
 
-      const existingMedia2 = await medplumClient.createResource({
+      await medplumClient.createResource({
         ...mockMedia,
         id: 'media-ref-2',
         identifier: [{ system: 'checksum', value: 'checksum-existing' }],
