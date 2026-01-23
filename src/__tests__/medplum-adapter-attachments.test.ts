@@ -35,7 +35,7 @@ describe('MedplumNotificationAdapter - Attachments', () => {
       getUserEmailFromNotification: jest.fn(),
     } as unknown as jest.Mocked<MedplumNotificationBackend<any>>;
 
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     mockNotification = {

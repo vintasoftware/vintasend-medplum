@@ -53,7 +53,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should initialize with correct properties', () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
 
     expect(adapter.notificationType).toBe('EMAIL');
     expect(adapter.key).toBe('medplum-email');
@@ -61,7 +61,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should send email successfully', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     const context = { foo: 'bar' };
@@ -88,7 +88,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should throw error if notification ID is missing', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     mockNotification.id = undefined;
@@ -97,7 +97,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should throw error if backend not injected', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
 
     mockNotification.id = '123';
 
@@ -105,7 +105,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should throw error if user email is not found', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     mockTemplateRenderer.render.mockResolvedValue({
@@ -118,7 +118,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should handle complex context objects', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     const complexContext = {
@@ -146,7 +146,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should handle template rendering errors', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     const renderError = new Error('Template not found');
@@ -160,7 +160,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should handle email sending errors', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     mockTemplateRenderer.render.mockResolvedValue({
@@ -176,7 +176,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should send multiple emails successfully', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     const sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
@@ -216,7 +216,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should handle empty context', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     mockTemplateRenderer.render.mockResolvedValue({
@@ -234,7 +234,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should handle different notification types gracefully', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     const smsNotification = { ...mockNotification, notificationType: 'SMS' as const };
@@ -254,7 +254,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should handle special characters in email content', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     mockTemplateRenderer.render.mockResolvedValue({
@@ -275,7 +275,7 @@ describe('MedplumNotificationAdapter', () => {
   });
 
   it('should handle very long email content', async () => {
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     const longBody = '<p>' + 'a'.repeat(10000) + '</p>';
@@ -298,13 +298,13 @@ describe('MedplumNotificationAdapter', () => {
 
   describe('backend injection', () => {
     it('should allow backend injection after initialization', () => {
-      adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+      adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
 
       expect(() => adapter.injectBackend(mockBackend)).not.toThrow();
     });
 
     it('should throw when sending without backend', async () => {
-      adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+      adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
 
       await expect(adapter.send(mockNotification, {})).rejects.toThrow('Backend not injected');
     });
@@ -312,7 +312,7 @@ describe('MedplumNotificationAdapter', () => {
 
   describe('notification validation', () => {
     beforeEach(() => {
-      adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+      adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
       adapter.injectBackend(mockBackend);
     });
 

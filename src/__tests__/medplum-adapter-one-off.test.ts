@@ -36,7 +36,7 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
       getUserEmailFromNotification: jest.fn(),
     } as unknown as jest.Mocked<MedplumNotificationBackend<any>>;
 
-    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer);
+    adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
     mockOneOffNotification = {
@@ -225,6 +225,7 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
       const adapterWithoutBackend = new MedplumNotificationAdapter(
         medplumClient,
         mockTemplateRenderer,
+        false,
       );
 
       mockTemplateRenderer.render.mockResolvedValue({
