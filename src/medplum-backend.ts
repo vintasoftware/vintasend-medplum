@@ -1,6 +1,7 @@
 import { MedplumClient } from '@medplum/core';
 import { Attachment, Communication, Media } from '@medplum/fhirtypes';
 import type { BaseAttachmentManager } from 'vintasend/dist/services/attachment-manager/base-attachment-manager';
+import type { BaseLogger } from 'vintasend/dist/services/loggers/base-logger';
 import type { BaseNotificationBackend } from 'vintasend/dist/services/notification-backends/base-notification-backend';
 import type {
   AttachmentFile,
@@ -28,6 +29,7 @@ type MedplumNotificationBackendOptions = {
 
 export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfig> implements BaseNotificationBackend<Config> {
   private attachmentManager?: BaseAttachmentManager;
+  private logger?: BaseLogger;
 
   constructor(private medplum: MedplumClient, private options: MedplumNotificationBackendOptions = {
     emailNotificationSubjectExtensionUrl: 'http://vintasend.com/fhir/StructureDefinition/email-notification-subject',
@@ -38,6 +40,13 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    */
   injectAttachmentManager(manager: BaseAttachmentManager): void {
     this.attachmentManager = manager;
+  }
+
+  /**
+   * Inject logger for debugging and monitoring
+   */
+  injectLogger(logger: BaseLogger): void {
+    this.logger = logger;
   }
 
   /**
@@ -231,7 +240,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Load and attach attachments to the returned notification if they were provided
     if (notification.attachments && notification.attachments.length > 0) {
+      this.logger?.info(`[MedplumBackend] Loading ${notification.attachments.length} attachments for notification ${mappedNotification.id}`);
       mappedNotification.attachments = await this.getAttachments(mappedNotification.id);
+      this.logger?.info(`[MedplumBackend] Loaded ${mappedNotification.attachments?.length || 0} attachments for notification ${mappedNotification.id}`);
     }
 
     return mappedNotification;
@@ -899,28 +910,37 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       const communication = await this.medplum.readResource('Communication', notificationId as string);
       const attachments: StoredAttachment[] = [];
 
+      this.logger?.info(`[MedplumBackend.getAttachments] Fetching attachments for notification ${notificationId}`);
+      this.logger?.info(`[MedplumBackend.getAttachments] Communication has ${communication.payload?.length || 0} payload items`);
+
       // Extract all Media IDs from payload
       const mediaIds: string[] = [];
       const payloadMap = new Map<string, { description?: string }>();
 
       for (const payload of communication.payload || []) {
+        this.logger?.info(`[MedplumBackend.getAttachments] Payload item: ${JSON.stringify(payload, null, 2)}`);
         const attachment = payload.contentAttachment;
         if (!attachment || !attachment.url) continue;
 
+        this.logger?.info(`[MedplumBackend.getAttachments] Found attachment URL: ${attachment.url}`);
+        
         // Extract Media ID from URL
         const match = attachment.url.match(/Media\/([^/]+)/);
         if (!match) continue;
 
         const mediaId = match[1];
+        this.logger?.info(`[MedplumBackend.getAttachments] Extracted Media ID: ${mediaId}`);
         mediaIds.push(mediaId);
         payloadMap.set(mediaId, { description: attachment.title });
       }
 
+      this.logger?.info(`[MedplumBackend.getAttachments] Found ${mediaIds.length} media IDs: ${mediaIds.join(', ')}`);
+
       // Fetch all Media resources in a single query
       if (mediaIds.length === 0) {
+        this.logger?.info(`[MedplumBackend.getAttachments] No media IDs found, returning empty array`);
         return [];
       }
-
       const mediaResources = await this.medplum.searchResources('Media', {
         _id: mediaIds.join(','),
       });
