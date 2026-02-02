@@ -923,7 +923,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         if (!attachment || !attachment.url) continue;
 
         this.logger?.info(`[MedplumBackend.getAttachments] Found attachment URL: ${attachment.url}`);
-        
+
         // Extract Media ID from URL
         const match = attachment.url.match(/Media\/([^/]+)/);
         if (!match) continue;
@@ -974,7 +974,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
       this.logger?.info(`[MedplumBackend.getAttachments] Returning ${attachments.length} attachments`);
       return attachments;
-    } catch {
+    } catch (error) {
+      this.logger?.info(`[MedplumBackend.getAttachments] Error fetching attachments: ${error}`);
       return [];
     }
   }
