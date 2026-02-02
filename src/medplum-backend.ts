@@ -227,7 +227,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     };
 
     const created = await this.medplum.createResource(communication);
-    return this.mapToDatabaseNotification(created) as DatabaseNotification<Config>;
+    const mappedNotification = this.mapToDatabaseNotification(created) as DatabaseNotification<Config>;
+
+    // Load and attach attachments to the returned notification if they were provided
+    if (notification.attachments && notification.attachments.length > 0) {
+      mappedNotification.attachments = await this.getAttachments(mappedNotification.id);
+    }
+
+    return mappedNotification;
   }
 
   async persistNotificationUpdate(
@@ -494,7 +501,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     };
 
     const created = await this.medplum.createResource(communication);
-    return this.mapToDatabaseNotification(created) as DatabaseOneOffNotification<Config>;
+    const mappedNotification = this.mapToDatabaseNotification(created) as DatabaseOneOffNotification<Config>;
+
+    // Load and attach attachments to the returned notification if they were provided
+    if (notification.attachments && notification.attachments.length > 0) {
+      mappedNotification.attachments = await this.getAttachments(mappedNotification.id);
+    }
+
+    return mappedNotification;
   }
 
   async persistOneOffNotificationUpdate(
@@ -705,7 +719,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Separate attachments by type: file references vs new uploads
     const fileReferences: Array<{ index: number; fileId: string; description?: string }> = [];
-    const newUploads: Array<{ 
+    const newUploads: Array<{
       index: number;
       file: FileAttachment;
       filename: string;
@@ -716,7 +730,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     for (let i = 0; i < attachments.length; i++) {
       const attachment = attachments[i];
       if ('fileId' in attachment) {
-        fileReferences.push({ 
+        fileReferences.push({
           index: i,
           fileId: attachment.fileId,
           description: attachment.description
