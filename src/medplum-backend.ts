@@ -941,14 +941,18 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         this.logger?.info(`[MedplumBackend.getAttachments] No media IDs found, returning empty array`);
         return [];
       }
+
+      this.logger?.info(`[MedplumBackend.getAttachments] Searching for Media resources with _id: ${mediaIds.join(',')}`);
       const mediaResources = await this.medplum.searchResources('Media', {
         _id: mediaIds.join(','),
       });
+      this.logger?.info(`[MedplumBackend.getAttachments] Search returned ${mediaResources.length} Media resources`);
 
       // Build attachments from the fetched Media resources
       for (const media of mediaResources) {
         if (!media.id) continue;
 
+        this.logger?.info(`[MedplumBackend.getAttachments] Processing Media resource ${media.id}`);
         const fileRecord = this.mediaToAttachmentFileRecord(media);
         const attachmentFile = this.createMedplumAttachmentFile(fileRecord);
         const payloadData = payloadMap.get(media.id);
@@ -965,8 +969,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
           description: payloadData?.description,
           storageMetadata: fileRecord.storageMetadata,
         });
+        this.logger?.info(`[MedplumBackend.getAttachments] Added attachment ${media.id} to list`);
       }
 
+      this.logger?.info(`[MedplumBackend.getAttachments] Returning ${attachments.length} attachments`);
       return attachments;
     } catch {
       return [];
