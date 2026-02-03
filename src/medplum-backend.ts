@@ -617,18 +617,30 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   /**
    * Helper: Convert FHIR Media resource to AttachmentFileRecord
+   * Extracts metadata directly from the Media resource using the same logic as MedplumAttachmentManager.getFile
    */
-  private mediaToAttachmentFileRecord(media: Media): AttachmentFileRecord {
-    const content = media.content;
-    if (!content || !media.id) {
-      throw new Error('Invalid Media resource: missing content or id');
+  private async mediaToAttachmentFileRecord(media: Media): Promise<AttachmentFileRecord | null> {
+    if (!media.id) {
+      throw new Error('Invalid Media resource: missing id');
     }
 
-    // Extract Binary ID from identifier (preferred) or URL (fallback)
+    if (!media.content) {
+      return null;
+    }
+
+    // Extract Binary ID from identifier
     const binaryIdIdentifier = media.identifier?.find(
       (id) => id.system === 'http://vintasend.com/fhir/binary-id'
     );
-    const binaryId = binaryIdIdentifier?.value;
+    let binaryId = binaryIdIdentifier?.value;
+
+    // If binaryId not found in identifier, try to extract from content.url
+    if (!binaryId && media.content.url) {
+      const match = media.content.url.match(/Binary\/([^/]+)/);
+      if (match) {
+        binaryId = match[1];
+      }
+    }
 
     // Extract checksum from identifier
     const checksumIdentifier = media.identifier?.find(
@@ -638,14 +650,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     return {
       id: media.id,
-      filename: content.title || 'untitled',
-      contentType: content.contentType || 'application/octet-stream',
-      size: content.size || 0,
+      filename: media.content.title || 'untitled',
+      contentType: media.content.contentType || 'application/octet-stream',
+      size: media.content.size || 0,
       checksum,
       storageMetadata: {
-        url: content.url,
+        url: media.content.url,
         binaryId: binaryId,
-        creation: content.creation,
+        creation: media.content.creation,
       },
       createdAt: media.meta?.lastUpdated ? new Date(media.meta.lastUpdated) : new Date(),
       updatedAt: media.meta?.lastUpdated ? new Date(media.meta.lastUpdated) : new Date(),
@@ -694,7 +706,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         return null;
       }
 
-      return this.mediaToAttachmentFileRecord(results[0]);
+      const fileRecord = await this.mediaToAttachmentFileRecord(results[0]);
+      return fileRecord;
     } catch {
       return null;
     }
@@ -721,7 +734,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       for (const media of results) {
         const checksum = media.identifier?.[0]?.value;
         if (checksum) {
-          filesByChecksum.set(checksum, this.mediaToAttachmentFileRecord(media));
+          const fileRecord = await this.mediaToAttachmentFileRecord(media);
+          if (fileRecord) {
+            filesByChecksum.set(checksum, fileRecord);
+          }
         }
       }
 
@@ -914,7 +930,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Filter orphaned media
     const orphaned = allMedia.filter((media) => media.id && !referencedIds.has(media.id));
-    return orphaned.map((media) => this.mediaToAttachmentFileRecord(media));
+    const fileRecords = await Promise.all(
+      orphaned.map((media) => this.mediaToAttachmentFileRecord(media))
+    );
+    return fileRecords.filter((record): record is AttachmentFileRecord => record !== null);
   }
 
   async getAttachments(notificationId: Config['NotificationIdType']): Promise<StoredAttachment[]> {
@@ -966,7 +985,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         if (!media.id) continue;
 
         this.logger?.info(`[MedplumBackend.getAttachments] Processing Media resource ${media.id}`);
-        const fileRecord = this.mediaToAttachmentFileRecord(media);
+        const fileRecord = await this.mediaToAttachmentFileRecord(media);
+        if (!fileRecord) continue;
+
         const attachmentFile = this.createMedplumAttachmentFile(fileRecord);
         const payloadData = payloadMap.get(media.id);
 
