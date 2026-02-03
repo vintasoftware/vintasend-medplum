@@ -193,12 +193,26 @@ export class MedplumAttachmentFile implements AttachmentFile {
     private medplum: MedplumClient,
     binaryUrl: string,
   ) {
-    // Extract Binary ID from URL (format: "Binary/{id}")
-    const match = binaryUrl.match(/Binary\/([^/]+)/);
-    if (!match) {
-      throw new Error(`Invalid Binary URL format: ${binaryUrl}`);
+    // Extract Binary ID from URL
+    // Supports two formats:
+    // 1. Simple reference: "Binary/{id}"
+    // 2. Full Medplum storage URL: "https://storage.medplum.com/binary/{projectId}/{binaryId}?..."
+
+    // Try to extract from full URL first
+    const fullUrlMatch = binaryUrl.match(/\/binary\/[^/]+\/([^/?]+)/);
+    if (fullUrlMatch) {
+      this.binaryId = fullUrlMatch[1];
+      return;
     }
-    this.binaryId = match[1];
+
+    // Fall back to simple Binary reference
+    const simpleMatch = binaryUrl.match(/Binary\/([^/]+)/);
+    if (simpleMatch) {
+      this.binaryId = simpleMatch[1];
+      return;
+    }
+
+    throw new Error(`Invalid Binary URL format: ${binaryUrl}`);
   }
 
   /**
