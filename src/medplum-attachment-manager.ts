@@ -117,7 +117,15 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
       const binaryIdIdentifier = media.identifier?.find(
         (id) => id.system === 'http://vintasend.com/fhir/binary-id'
       );
-      const binaryId = binaryIdIdentifier?.value;
+      let binaryId = binaryIdIdentifier?.value;
+
+      // If binaryId not found in identifier, try to extract from content.url
+      if (!binaryId && media.content.url) {
+        const match = media.content.url.match(/Binary\/([^/]+)/);
+        if (match) {
+          binaryId = match[1];
+        }
+      }
 
       // Extract checksum from identifier
       const checksumIdentifier = media.identifier?.find(
@@ -178,15 +186,25 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
   /**
    * Reconstruct an AttachmentFile from storage metadata.
    *
-   * @param storageMetadata - Metadata containing 'binaryId'
+   * @param storageMetadata - Metadata containing 'binaryId' or 'url'
    * @returns AttachmentFile instance for accessing the file
    */
   reconstructAttachmentFile(storageMetadata: Record<string, unknown>): AttachmentFile {
-    if (!storageMetadata.binaryId || typeof storageMetadata.binaryId !== 'string') {
-      throw new Error('Storage metadata must contain binaryId');
+    let binaryId = storageMetadata.binaryId as string | undefined;
+
+    // If binaryId not provided directly, try to extract from url
+    if (!binaryId && storageMetadata.url && typeof storageMetadata.url === 'string') {
+      const match = storageMetadata.url.match(/Binary\/([^/]+)/);
+      if (match) {
+        binaryId = match[1];
+      }
     }
 
-    return new MedplumAttachmentFile(this.medplum, storageMetadata.binaryId);
+    if (!binaryId) {
+      throw new Error('Storage metadata must contain binaryId or a url with Binary reference');
+    }
+
+    return new MedplumAttachmentFile(this.medplum, binaryId);
   }
 }
 

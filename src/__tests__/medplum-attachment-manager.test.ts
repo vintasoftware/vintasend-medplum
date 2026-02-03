@@ -278,6 +278,37 @@ describe('MedplumAttachmentManager', () => {
 
       expect(result).toBeNull();
     });
+
+    it('should extract binaryId from content.url when identifier is missing', async () => {
+      const mockMedia: Media = {
+        resourceType: 'Media',
+        id: 'media-123',
+        status: 'completed',
+        meta: {
+          tag: [{ code: 'attachment-file' }],
+        },
+        content: {
+          contentType: 'application/pdf',
+          url: 'Binary/binary-789',
+          size: 1024,
+          title: 'test.pdf',
+        },
+        // No identifiers - simulating a Media resource created outside uploadFile
+      };
+
+      jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
+
+      const result = await manager.getFile('media-123');
+
+      expect(result).toMatchObject({
+        id: 'media-123',
+        filename: 'test.pdf',
+        storageMetadata: {
+          binaryId: 'binary-789',
+          url: 'Binary/binary-789',
+        },
+      });
+    });
   });
 
   describe('deleteFile', () => {
@@ -350,11 +381,32 @@ describe('MedplumAttachmentManager', () => {
       expect(typeof attachmentFile.delete).toBe('function');
     });
 
-    it('should throw error if metadata is missing binaryId', () => {
+    it('should reconstruct AttachmentFile from URL when binaryId is missing', () => {
+      const storageMetadata = {
+        url: 'Binary/binary-456',
+      };
+
+      const attachmentFile = manager.reconstructAttachmentFile(storageMetadata);
+
+      expect(attachmentFile).toBeDefined();
+      expect(typeof attachmentFile.read).toBe('function');
+    });
+
+    it('should throw error if metadata has neither binaryId nor valid url', () => {
       const invalidMetadata = {};
 
       expect(() => manager.reconstructAttachmentFile(invalidMetadata)).toThrow(
-        'Storage metadata must contain binaryId',
+        'Storage metadata must contain binaryId or a url with Binary reference',
+      );
+    });
+
+    it('should throw error if url does not contain Binary reference', () => {
+      const invalidMetadata = {
+        url: 'https://example.com/file',
+      };
+
+      expect(() => manager.reconstructAttachmentFile(invalidMetadata)).toThrow(
+        'Storage metadata must contain binaryId or a url with Binary reference',
       );
     });
   });
