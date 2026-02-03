@@ -113,14 +113,27 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
         return null;
       }
 
+      // Extract Binary ID from identifier
+      const binaryIdIdentifier = media.identifier?.find(
+        (id) => id.system === 'http://vintasend.com/fhir/binary-id'
+      );
+      const binaryId = binaryIdIdentifier?.value;
+
+      // Extract checksum from identifier
+      const checksumIdentifier = media.identifier?.find(
+        (id) => id.system === 'http://vintasend.com/fhir/attachment-checksum'
+      );
+      const checksum = checksumIdentifier?.value || '';
+
       return {
         id: media.id,
         filename: media.content.title || 'untitled',
         contentType: media.content.contentType || 'application/octet-stream',
         size: media.content.size || 0,
-        checksum: media.identifier?.[0]?.value || '',
+        checksum,
         storageMetadata: {
           url: media.content.url,
+          binaryId: binaryId,
           creation: media.content.creation,
         },
         createdAt: media.meta?.lastUpdated ? new Date(media.meta.lastUpdated) : new Date(),
@@ -165,24 +178,15 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
   /**
    * Reconstruct an AttachmentFile from storage metadata.
    *
-   * @param storageMetadata - Metadata containing either 'url' (Binary URL) or 'binaryId'
+   * @param storageMetadata - Metadata containing 'binaryId'
    * @returns AttachmentFile instance for accessing the file
    */
   reconstructAttachmentFile(storageMetadata: Record<string, unknown>): AttachmentFile {
-    // Support both 'url' (from upload) and 'binaryId' (direct ID)
-    let binaryUrl: string;
-
-    if (storageMetadata.binaryId && typeof storageMetadata.binaryId === 'string') {
-      // Direct Binary ID format
-      binaryUrl = `Binary/${storageMetadata.binaryId}`;
-    } else if (storageMetadata.url && typeof storageMetadata.url === 'string') {
-      // Binary URL format (from uploadFile)
-      binaryUrl = storageMetadata.url;
-    } else {
-      throw new Error('Storage metadata must contain binaryId for Medplum files');
+    if (!storageMetadata.binaryId || typeof storageMetadata.binaryId !== 'string') {
+      throw new Error('Storage metadata must contain binaryId');
     }
 
-    return new MedplumAttachmentFile(this.medplum, binaryUrl);
+    return new MedplumAttachmentFile(this.medplum, storageMetadata.binaryId);
   }
 }
 
@@ -192,56 +196,38 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
  * Provides access to files stored in Medplum Binary resources.
  */
 export class MedplumAttachmentFile implements AttachmentFile {
-  private binaryId: string;
-
   constructor(
     private medplum: MedplumClient,
-    binaryUrl: string,
-  ) {
-    // Extract Binary ID from URL
-    // Supports two formats:
-    // 1. Simple reference: "Binary/{id}"
-    // 2. Full Medplum storage URL: "https://storage.medplum.com/binary/{projectId}/{binaryId}?..."
-    console.log(`[MedplumAttachmentFile] Constructing with binaryUrl: ${binaryUrl}`);
-
-    // Try to extract from full URL first
-    const fullUrlMatch = binaryUrl.match(/\/binary\/[^/]+\/([^/?]+)/);
-    if (fullUrlMatch) {
-      this.binaryId = fullUrlMatch[1];
-      console.log(`[MedplumAttachmentFile] Extracted binaryId from full URL: ${this.binaryId}`);
-      return;
-    }
-
-    // Fall back to simple Binary reference
-    const simpleMatch = binaryUrl.match(/Binary\/([^/]+)/);
-    if (simpleMatch) {
-      this.binaryId = simpleMatch[1];
-      console.log(`[MedplumAttachmentFile] Extracted binaryId from simple reference: ${this.binaryId}`);
-      return;
-    }
-
-    throw new Error(`Invalid Binary URL format: ${binaryUrl}`);
-  }
+    private binaryId: string,
+  ) {}
 
   /**
    * Read the entire file into memory as a Buffer.
+   *
+   * Works with Binary resources that have either:
+   * - Inline data (base64 encoded)
+   * - A presigned URL to download from
    */
   async read(): Promise<Buffer> {
-    try {
-      console.log(`[MedplumAttachmentFile.read] Reading Binary resource with ID: ${this.binaryId}`);
-      const binary = await this.medplum.readResource('Binary', this.binaryId);
-      console.log(`[MedplumAttachmentFile.read] Successfully fetched Binary resource: ${this.binaryId}`);
-      if (!binary.data) {
-        throw new Error('Binary resource has no data');
-      }
-      const buffer = Buffer.from(binary.data, 'base64');
-      console.log(`[MedplumAttachmentFile.read] Successfully converted to buffer, size: ${buffer.length} bytes`);
-      return buffer;
-    } catch (error) {
-      console.error(`[MedplumAttachmentFile.read] Error reading Binary ${this.binaryId}:`, error);
-      console.error(`[MedplumAttachmentFile.read] Error details:`, JSON.stringify(error, null, 2));
-      throw error;
+    const binary = await this.medplum.readResource('Binary', this.binaryId);
+
+    // If data is embedded in the Binary resource, use it directly
+    if (binary.data) {
+      return Buffer.from(binary.data, 'base64');
     }
+
+    // If data is not embedded but a URL is available, download it
+    if (binary.url) {
+      const response = await fetch(binary.url);
+      if (!response.ok) {
+        throw new Error(`Failed to download binary from URL: ${response.statusText}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    }
+
+    // Neither data nor URL available
+    throw new Error('Binary resource has neither data nor url');
   }
 
   /**
@@ -263,22 +249,22 @@ export class MedplumAttachmentFile implements AttachmentFile {
   /**
    * Generate a URL for accessing the file.
    *
-   * For Medplum, this returns the Binary resource URL.
-   * In production, you might want to generate a presigned URL.
+   * For Medplum, this returns a presigned URL from the Binary resource.
    *
    * @param expiresIn - Seconds until the URL expires (not used for Medplum)
-   * @returns URL for file access
+   * @returns Presigned URL for file access
    */
   async url(expiresIn = 3600): Promise<string> {
-    // For Medplum, we can use the Binary resource URL
-    // In a production setup, you might want to use Medplum's authentication
-    // or generate a time-limited access token
-    return `Binary/${this.binaryId}`;
+    // Fetch the Binary resource to get the presigned URL
+    const binary = await this.medplum.readResource('Binary', this.binaryId);
+
+    if (!binary.url) {
+      throw new Error(`Binary resource ${this.binaryId} does not have a presigned URL`);
+    }
+
+    return binary.url;
   }
 
-  /**
-   * Delete this file from storage.
-   */
   async delete(): Promise<void> {
     await this.medplum.deleteResource('Binary', this.binaryId);
   }

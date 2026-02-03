@@ -246,8 +246,12 @@ describe('MedplumAttachmentManager', () => {
         },
         identifier: [
           {
-            system: 'checksum',
+            system: 'http://vintasend.com/fhir/attachment-checksum',
             value: 'abc123',
+          },
+          {
+            system: 'http://vintasend.com/fhir/binary-id',
+            value: 'binary-123',
           },
         ],
         createdDateTime: '2026-01-15T00:00:00Z',
@@ -350,7 +354,7 @@ describe('MedplumAttachmentManager', () => {
       const invalidMetadata = {};
 
       expect(() => manager.reconstructAttachmentFile(invalidMetadata)).toThrow(
-        'Storage metadata must contain binaryId for Medplum files',
+        'Storage metadata must contain binaryId',
       );
     });
   });
@@ -366,7 +370,7 @@ describe('MedplumAttachmentManager', () => {
     });
 
     describe('read', () => {
-      it('should read file as Buffer', async () => {
+      it('should read file as Buffer from inline data', async () => {
         const mockBinary: Binary = {
           resourceType: 'Binary',
           id: 'binary-123',
@@ -383,7 +387,55 @@ describe('MedplumAttachmentManager', () => {
         expect(readResourceSpy).toHaveBeenCalledWith('Binary', 'binary-123');
       });
 
-      it('should throw error if Binary resource has no data', async () => {
+      it('should download file from URL when data is not available', async () => {
+        const mockBinary: Binary = {
+          resourceType: 'Binary',
+          id: 'binary-123',
+          contentType: 'text/plain',
+          url: 'https://storage.example.com/binary-123',
+        };
+
+        jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+
+        const testContent = 'downloaded content';
+        const testBuffer = Buffer.from(testContent);
+        // Create a proper ArrayBuffer from the buffer
+        const mockArrayBuffer = testBuffer.buffer.slice(
+          testBuffer.byteOffset,
+          testBuffer.byteOffset + testBuffer.byteLength
+        );
+
+        global.fetch = jest.fn().mockResolvedValue({
+          ok: true,
+          arrayBuffer: jest.fn().mockResolvedValue(mockArrayBuffer),
+        });
+
+        const result = await attachmentFile.read();
+
+        expect(Buffer.isBuffer(result)).toBe(true);
+        expect(result.toString()).toBe('downloaded content');
+        expect(global.fetch).toHaveBeenCalledWith('https://storage.example.com/binary-123');
+      });
+
+      it('should throw error if download fails', async () => {
+        const mockBinary: Binary = {
+          resourceType: 'Binary',
+          id: 'binary-123',
+          contentType: 'text/plain',
+          url: 'https://storage.example.com/binary-123',
+        };
+
+        jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+
+        global.fetch = jest.fn().mockResolvedValue({
+          ok: false,
+          statusText: 'Not Found',
+        });
+
+        await expect(attachmentFile.read()).rejects.toThrow('Failed to download binary from URL: Not Found');
+      });
+
+      it('should throw error if Binary resource has neither data nor url', async () => {
         const mockBinary: Binary = {
           resourceType: 'Binary',
           id: 'binary-123',
@@ -392,7 +444,7 @@ describe('MedplumAttachmentManager', () => {
 
         jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
 
-        await expect(attachmentFile.read()).rejects.toThrow('Binary resource has no data');
+        await expect(attachmentFile.read()).rejects.toThrow('Binary resource has neither data nor url');
       });
     });
 
@@ -414,10 +466,31 @@ describe('MedplumAttachmentManager', () => {
     });
 
     describe('url', () => {
-      it('should return Binary resource reference URL', async () => {
+      it('should return presigned URL from Binary resource', async () => {
+        const mockBinary: Binary = {
+          resourceType: 'Binary',
+          id: 'binary-123',
+          contentType: 'text/plain',
+          url: 'https://storage.example.com/binary-123?signature=abc',
+        };
+
+        jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+
         const url = await attachmentFile.url();
 
-        expect(url).toBe('Binary/binary-123');
+        expect(url).toBe('https://storage.example.com/binary-123?signature=abc');
+      });
+
+      it('should throw error if Binary resource has no url', async () => {
+        const mockBinary: Binary = {
+          resourceType: 'Binary',
+          id: 'binary-123',
+          contentType: 'text/plain',
+        };
+
+        jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+
+        await expect(attachmentFile.url()).rejects.toThrow('Binary resource binary-123 does not have a presigned URL');
       });
     });
 
