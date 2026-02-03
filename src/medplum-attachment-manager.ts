@@ -69,6 +69,10 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
           system: 'http://vintasend.com/fhir/attachment-checksum',
           value: checksum,
         },
+        {
+          system: 'http://vintasend.com/fhir/binary-id',
+          value: createdBinary.id as string,
+        },
       ],
       meta: {
         tag: [
@@ -87,6 +91,7 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
       checksum,
       storageMetadata: {
         url: binaryUrl,
+        binaryId: createdBinary.id as string,
         creation: createdMedia.content.creation,
       },
       createdAt: createdMedia.meta?.lastUpdated ? new Date(createdMedia.meta.lastUpdated) : new Date(),

@@ -36,8 +36,12 @@ describe('MedplumNotificationBackend - Attachments', () => {
     },
     identifier: [
       {
-        system: 'checksum',
+        system: 'http://vintasend.com/fhir/attachment-checksum',
         value: 'abc123',
+      },
+      {
+        system: 'http://vintasend.com/fhir/binary-id',
+        value: 'binary-123',
       },
     ],
     createdDateTime: '2026-01-15T00:00:00Z',

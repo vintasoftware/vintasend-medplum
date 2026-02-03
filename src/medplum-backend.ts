@@ -624,14 +624,27 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       throw new Error('Invalid Media resource: missing content or id');
     }
 
+    // Extract Binary ID from identifier (preferred) or URL (fallback)
+    const binaryIdIdentifier = media.identifier?.find(
+      (id) => id.system === 'http://vintasend.com/fhir/binary-id'
+    );
+    const binaryId = binaryIdIdentifier?.value;
+
+    // Extract checksum from identifier
+    const checksumIdentifier = media.identifier?.find(
+      (id) => id.system === 'http://vintasend.com/fhir/attachment-checksum'
+    );
+    const checksum = checksumIdentifier?.value || '';
+
     return {
       id: media.id,
       filename: content.title || 'untitled',
       contentType: content.contentType || 'application/octet-stream',
       size: content.size || 0,
-      checksum: media.identifier?.[0]?.value || '',
+      checksum,
       storageMetadata: {
         url: content.url,
+        binaryId: binaryId,
         creation: content.creation,
       },
       createdAt: media.meta?.lastUpdated ? new Date(media.meta.lastUpdated) : new Date(),
