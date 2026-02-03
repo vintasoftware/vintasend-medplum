@@ -244,6 +244,7 @@ export class MedplumAttachmentFile implements AttachmentFile {
         return data;
       }
 
+      // Unexpected data type from download - fall through to fallback
       throw new Error(`Unexpected data type from Medplum download: ${typeof data}`);
     } catch (error) {
       // Fallback to reading the Binary resource directly if download fails
@@ -264,8 +265,8 @@ export class MedplumAttachmentFile implements AttachmentFile {
         return Buffer.from(arrayBuffer);
       }
 
-      // Re-throw original error if fallback also fails
-      throw error;
+      // Neither data nor URL available
+      throw new Error('Binary resource has neither data nor url');
     }
   }
 
