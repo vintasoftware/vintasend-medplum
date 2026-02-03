@@ -202,11 +202,13 @@ export class MedplumAttachmentFile implements AttachmentFile {
     // Supports two formats:
     // 1. Simple reference: "Binary/{id}"
     // 2. Full Medplum storage URL: "https://storage.medplum.com/binary/{projectId}/{binaryId}?..."
+    console.log(`[MedplumAttachmentFile] Constructing with binaryUrl: ${binaryUrl}`);
 
     // Try to extract from full URL first
     const fullUrlMatch = binaryUrl.match(/\/binary\/[^/]+\/([^/?]+)/);
     if (fullUrlMatch) {
       this.binaryId = fullUrlMatch[1];
+      console.log(`[MedplumAttachmentFile] Extracted binaryId from full URL: ${this.binaryId}`);
       return;
     }
 
@@ -214,6 +216,7 @@ export class MedplumAttachmentFile implements AttachmentFile {
     const simpleMatch = binaryUrl.match(/Binary\/([^/]+)/);
     if (simpleMatch) {
       this.binaryId = simpleMatch[1];
+      console.log(`[MedplumAttachmentFile] Extracted binaryId from simple reference: ${this.binaryId}`);
       return;
     }
 
@@ -224,11 +227,21 @@ export class MedplumAttachmentFile implements AttachmentFile {
    * Read the entire file into memory as a Buffer.
    */
   async read(): Promise<Buffer> {
-    const binary = await this.medplum.readResource('Binary', this.binaryId);
-    if (!binary.data) {
-      throw new Error('Binary resource has no data');
+    try {
+      console.log(`[MedplumAttachmentFile.read] Reading Binary resource with ID: ${this.binaryId}`);
+      const binary = await this.medplum.readResource('Binary', this.binaryId);
+      console.log(`[MedplumAttachmentFile.read] Successfully fetched Binary resource: ${this.binaryId}`);
+      if (!binary.data) {
+        throw new Error('Binary resource has no data');
+      }
+      const buffer = Buffer.from(binary.data, 'base64');
+      console.log(`[MedplumAttachmentFile.read] Successfully converted to buffer, size: ${buffer.length} bytes`);
+      return buffer;
+    } catch (error) {
+      console.error(`[MedplumAttachmentFile.read] Error reading Binary ${this.binaryId}:`, error);
+      console.error(`[MedplumAttachmentFile.read] Error details:`, JSON.stringify(error, null, 2));
+      throw error;
     }
-    return Buffer.from(binary.data, 'base64');
   }
 
   /**
