@@ -224,28 +224,49 @@ export class MedplumAttachmentFile implements AttachmentFile {
    *
    * Works with Binary resources that have either:
    * - Inline data (base64 encoded)
-   * - A presigned URL to download from
+   * - External storage (downloaded via Medplum client)
    */
   async read(): Promise<Buffer> {
-    const binary = await this.medplum.readResource('Binary', this.binaryId);
+    try {
+      // Use Medplum's download method which handles both inline and external storage
+      const data = await this.medplum.download(`Binary/${this.binaryId}`);
 
-    // If data is embedded in the Binary resource, use it directly
-    if (binary.data) {
-      return Buffer.from(binary.data, 'base64');
-    }
-
-    // If data is not embedded but a URL is available, download it
-    if (binary.url) {
-      const response = await fetch(binary.url);
-      if (!response.ok) {
-        throw new Error(`Failed to download binary from URL: ${response.statusText}`);
+      // Convert to Buffer
+      if (data instanceof ArrayBuffer) {
+        return Buffer.from(data);
+      } else if (data instanceof Blob) {
+        const arrayBuffer = await data.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+      } else if (typeof data === 'string') {
+        // If it's a base64 string
+        return Buffer.from(data, 'base64');
+      } else if (Buffer.isBuffer(data)) {
+        return data;
       }
-      const arrayBuffer = await response.arrayBuffer();
-      return Buffer.from(arrayBuffer);
-    }
 
-    // Neither data nor URL available
-    throw new Error('Binary resource has neither data nor url');
+      throw new Error(`Unexpected data type from Medplum download: ${typeof data}`);
+    } catch (error) {
+      // Fallback to reading the Binary resource directly if download fails
+      const binary = await this.medplum.readResource('Binary', this.binaryId);
+
+      // If data is embedded in the Binary resource, use it directly
+      if (binary.data) {
+        return Buffer.from(binary.data, 'base64');
+      }
+
+      // If data is not embedded but a URL is available, download it
+      if (binary.url) {
+        const response = await fetch(binary.url);
+        if (!response.ok) {
+          throw new Error(`Failed to download binary from URL: ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+      }
+
+      // Re-throw original error if fallback also fails
+      throw error;
+    }
   }
 
   /**
