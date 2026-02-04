@@ -654,7 +654,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       contentType: media.content.contentType || 'application/octet-stream',
       size: media.content.size || 0,
       checksum,
-      storageMetadata: {
+      storageIdentifiers: {
+        id: media.id,
         url: media.content.url,
         binaryId: binaryId,
         creation: media.content.creation,
@@ -668,7 +669,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    * Helper: Create FHIR Attachment from file record
    */
   private async createFhirAttachment(fileRecord: AttachmentFileRecord): Promise<Attachment> {
-    const url = fileRecord.storageMetadata?.url as string | undefined;
+    const url = fileRecord.storageIdentifiers?.url as string | undefined;
     return {
       contentType: fileRecord.contentType,
       url: url,
@@ -679,11 +680,11 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   /**
-   * Helper: Create MedplumAttachmentFile from storage metadata
+   * Helper: Create MedplumAttachmentFile from storage identifiers
    */
   private createMedplumAttachmentFile(fileRecord: AttachmentFileRecord): AttachmentFile {
     const manager = this.getAttachmentManager();
-    return manager.reconstructAttachmentFile(fileRecord.storageMetadata);
+    return manager.reconstructAttachmentFile(fileRecord.storageIdentifiers);
   }
 
   async getAttachmentFile(fileId: string): Promise<AttachmentFileRecord | null> {
@@ -887,12 +888,12 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Delete from storage backend
     if (fileRecord && this.attachmentManager) {
-      await this.attachmentManager.deleteFile(fileId);
+      await this.attachmentManager.deleteFileByIdentifiers(fileRecord.storageIdentifiers);
     }
 
     // Delete Binary resource if it exists
-    if (fileRecord.storageMetadata?.url) {
-      const binaryId = (fileRecord.storageMetadata.url as string).replace('Binary/', '');
+    if (fileRecord.storageIdentifiers?.url) {
+      const binaryId = (fileRecord.storageIdentifiers.url as string).replace('Binary/', '');
       try {
         await this.medplum.deleteResource('Binary', binaryId);
       } catch {
@@ -1001,7 +1002,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
           createdAt: fileRecord.createdAt,
           file: attachmentFile,
           description: payloadData?.description,
-          storageMetadata: fileRecord.storageMetadata,
+          storageMetadata: fileRecord.storageIdentifiers,
         });
         this.logger?.info(`[MedplumBackend.getAttachments] Added attachment ${media.id} to list`);
       }

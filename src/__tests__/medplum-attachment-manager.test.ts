@@ -98,8 +98,10 @@ describe('MedplumAttachmentManager', () => {
         contentType,
         size: buffer.length,
         checksum: expect.any(String),
-        storageMetadata: {
+        storageIdentifiers: {
+          id: expect.any(String),
           url: 'Binary/binary-123',
+          binaryId: expect.any(String),
           creation: expect.any(String),
         },
         createdAt: expect.any(Date),
@@ -303,7 +305,8 @@ describe('MedplumAttachmentManager', () => {
       expect(result).toMatchObject({
         id: 'media-123',
         filename: 'test.pdf',
-        storageMetadata: {
+        storageIdentifiers: {
+          id: 'media-123',
           binaryId: 'binary-789',
           url: 'Binary/binary-789',
         },
@@ -369,6 +372,7 @@ describe('MedplumAttachmentManager', () => {
   describe('reconstructAttachmentFile', () => {
     it('should reconstruct AttachmentFile from storage metadata', () => {
       const storageMetadata = {
+        id: 'media-123',
         binaryId: 'binary-123',
       };
 
@@ -383,6 +387,7 @@ describe('MedplumAttachmentManager', () => {
 
     it('should reconstruct AttachmentFile from URL when binaryId is missing', () => {
       const storageMetadata = {
+        id: 'media-456',
         url: 'Binary/binary-456',
       };
 
@@ -393,7 +398,7 @@ describe('MedplumAttachmentManager', () => {
     });
 
     it('should throw error if metadata has neither binaryId nor valid url', () => {
-      const invalidMetadata = {};
+      const invalidMetadata = { id: 'test-id' };
 
       expect(() => manager.reconstructAttachmentFile(invalidMetadata)).toThrow(
         'Storage metadata must contain binaryId or a url with Binary reference',
@@ -402,6 +407,7 @@ describe('MedplumAttachmentManager', () => {
 
     it('should throw error if url does not contain Binary reference', () => {
       const invalidMetadata = {
+        id: 'test-id',
         url: 'https://example.com/file',
       };
 
@@ -414,6 +420,7 @@ describe('MedplumAttachmentManager', () => {
   describe('MedplumAttachmentFile', () => {
     let attachmentFile: any;
     const storageMetadata = {
+      id: 'media-123',
       binaryId: 'binary-123',
     };
 

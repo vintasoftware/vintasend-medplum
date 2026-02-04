@@ -80,7 +80,7 @@ describe('MedplumNotificationAdapter - Attachments', () => {
       description: 'Test file',
       file: mockFile,
       createdAt: new Date(),
-      storageMetadata: {},
+      storageMetadata: { id: 'file-1' },
     };
 
     const notificationWithAttachments = {
@@ -146,7 +146,7 @@ describe('MedplumNotificationAdapter - Attachments', () => {
       description: 'PDF document',
       file: mockFile1,
       createdAt: new Date(),
-      storageMetadata: {},
+      storageMetadata: { id: 'file-1' },
     };
 
     const attachment2: StoredAttachment = {
@@ -159,7 +159,7 @@ describe('MedplumNotificationAdapter - Attachments', () => {
       description: 'Image file',
       file: mockFile2,
       createdAt: new Date(),
-      storageMetadata: {},
+      storageMetadata: { id: 'file-2' },
     };
 
     const notificationWithAttachments = {
@@ -272,7 +272,7 @@ describe('MedplumNotificationAdapter - Attachments', () => {
       description: 'Test file',
       file: mockFile,
       createdAt: new Date(),
-      storageMetadata: {},
+      storageMetadata: { id: 'file-1' },
     };
 
     const notificationWithAttachments = {

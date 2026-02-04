@@ -5,6 +5,7 @@ import type {
   AttachmentFileRecord,
   AttachmentFile,
   FileAttachment,
+  StorageIdentifiers,
 } from 'vintasend/dist/types/attachment';
 
 /**
@@ -89,7 +90,8 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
       contentType: finalContentType,
       size: buffer.length,
       checksum,
-      storageMetadata: {
+      storageIdentifiers: {
+        id: createdMedia.id as string,
         url: binaryUrl,
         binaryId: createdBinary.id as string,
         creation: createdMedia.content.creation,
@@ -139,7 +141,8 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
         contentType: media.content.contentType || 'application/octet-stream',
         size: media.content.size || 0,
         checksum,
-        storageMetadata: {
+        storageIdentifiers: {
+          id: media.id,
           url: media.content.url,
           binaryId: binaryId,
           creation: media.content.creation,
@@ -184,12 +187,24 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
   }
 
   /**
-   * Reconstruct an AttachmentFile from storage metadata.
+   * Delete a file from Medplum storage using storage identifiers.
+   */
+  async deleteFileByIdentifiers(storageIdentifiers: StorageIdentifiers): Promise<void> {
+    if (storageIdentifiers.id && typeof storageIdentifiers.id === 'string') {
+      await this.deleteFile(storageIdentifiers.id);
+      return;
+    }
+
+    throw new Error('Invalid storage identifiers: missing id');
+  }
+
+  /**
+  * Reconstruct an AttachmentFile from storage identifiers.
    *
-   * @param storageMetadata - Metadata containing 'binaryId' or 'url'
+  * @param storageMetadata - Identifiers containing 'binaryId' or 'url'
    * @returns AttachmentFile instance for accessing the file
    */
-  reconstructAttachmentFile(storageMetadata: Record<string, unknown>): AttachmentFile {
+  reconstructAttachmentFile(storageMetadata: StorageIdentifiers): AttachmentFile {
     let binaryId = storageMetadata.binaryId as string | undefined;
 
     // If binaryId not provided directly, try to extract from url

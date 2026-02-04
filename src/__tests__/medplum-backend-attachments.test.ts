@@ -101,6 +101,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
       reconstructAttachmentFile: jest.fn(),
       uploadFile: jest.fn(),
       deleteFile: jest.fn(),
+      deleteFileByIdentifiers: jest.fn(),
       detectContentType: jest.fn(),
       calculateChecksum: jest.fn(),
       fileToBuffer: jest.fn(),
@@ -165,7 +166,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
 
       await backend.deleteAttachmentFile(createdMedia.id as string);
 
-      expect(mockAttachmentManager.deleteFile).toHaveBeenCalledWith(createdMedia.id);
+      expect(mockAttachmentManager.deleteFileByIdentifiers).toHaveBeenCalled();
 
       // Verify the media resource was deleted
       await expect(
@@ -188,7 +189,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
     it('should return early if file not found', async () => {
       await backend.deleteAttachmentFile('nonexistent');
 
-      expect(mockAttachmentManager.deleteFile).not.toHaveBeenCalled();
+      expect(mockAttachmentManager.deleteFileByIdentifiers).not.toHaveBeenCalled();
     });
   });
 
