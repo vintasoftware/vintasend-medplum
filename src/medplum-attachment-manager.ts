@@ -7,6 +7,7 @@ import type {
   FileAttachment,
   StorageIdentifiers,
 } from 'vintasend/dist/types/attachment';
+import type { MedplumStorageIdentifiers } from './types';
 
 /**
  * Medplum AttachmentManager implementation.
@@ -84,18 +85,20 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
 
     const createdMedia = await this.medplum.createResource(media);
 
+    const storageIdentifiers: MedplumStorageIdentifiers = {
+      id: createdMedia.id as string,
+      medplumBinaryId: createdBinary.id as string,
+      medplumMediaId: createdMedia.id as string,
+      url: binaryUrl,
+    };
+
     return {
       id: createdMedia.id as string,
       filename,
       contentType: finalContentType,
       size: buffer.length,
       checksum,
-      storageIdentifiers: {
-        id: createdMedia.id as string,
-        url: binaryUrl,
-        binaryId: createdBinary.id as string,
-        creation: createdMedia.content.creation,
-      },
+      storageIdentifiers,
       createdAt: createdMedia.meta?.lastUpdated ? new Date(createdMedia.meta.lastUpdated) : new Date(),
       updatedAt: createdMedia.meta?.lastUpdated ? new Date(createdMedia.meta.lastUpdated) : new Date(),
     };
@@ -135,18 +138,20 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
       );
       const checksum = checksumIdentifier?.value || '';
 
+      const storageIdentifiers: MedplumStorageIdentifiers = {
+        id: media.id,
+        medplumBinaryId: binaryId || '',
+        medplumMediaId: media.id,
+        url: media.content.url || '',
+      };
+
       return {
         id: media.id,
         filename: media.content.title || 'untitled',
         contentType: media.content.contentType || 'application/octet-stream',
         size: media.content.size || 0,
         checksum,
-        storageIdentifiers: {
-          id: media.id,
-          url: media.content.url,
-          binaryId: binaryId,
-          creation: media.content.creation,
-        },
+        storageIdentifiers,
         createdAt: media.meta?.lastUpdated ? new Date(media.meta.lastUpdated) : new Date(),
         updatedAt: media.meta?.lastUpdated ? new Date(media.meta.lastUpdated) : new Date(),
       };
@@ -199,24 +204,24 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
   }
 
   /**
-  * Reconstruct an AttachmentFile from storage identifiers.
+   * Reconstruct an AttachmentFile from storage identifiers.
    *
-  * @param storageMetadata - Identifiers containing 'binaryId' or 'url'
+   * @param storageIdentifiers - MedplumStorageIdentifiers containing 'medplumBinaryId' or 'url'
    * @returns AttachmentFile instance for accessing the file
    */
-  reconstructAttachmentFile(storageMetadata: StorageIdentifiers): AttachmentFile {
-    let binaryId = storageMetadata.binaryId as string | undefined;
+  reconstructAttachmentFile(storageIdentifiers: StorageIdentifiers): AttachmentFile {
+    let binaryId = (storageIdentifiers as MedplumStorageIdentifiers).medplumBinaryId;
 
-    // If binaryId not provided directly, try to extract from url
-    if (!binaryId && storageMetadata.url && typeof storageMetadata.url === 'string') {
-      const match = storageMetadata.url.match(/Binary\/([^/]+)/);
+    // If medplumBinaryId not provided directly, try to extract from url
+    if (!binaryId && storageIdentifiers.url && typeof storageIdentifiers.url === 'string') {
+      const match = storageIdentifiers.url.match(/Binary\/([^/]+)/);
       if (match) {
         binaryId = match[1];
       }
     }
 
     if (!binaryId) {
-      throw new Error('Storage metadata must contain binaryId or a url with Binary reference');
+      throw new Error('Storage identifiers must contain medplumBinaryId or a url with Binary reference');
     }
 
     return new MedplumAttachmentFile(this.medplum, binaryId);

@@ -100,9 +100,9 @@ describe('MedplumAttachmentManager', () => {
         checksum: expect.any(String),
         storageIdentifiers: {
           id: expect.any(String),
+          medplumBinaryId: expect.any(String),
+          medplumMediaId: expect.any(String),
           url: 'Binary/binary-123',
-          binaryId: expect.any(String),
-          creation: expect.any(String),
         },
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
@@ -307,7 +307,8 @@ describe('MedplumAttachmentManager', () => {
         filename: 'test.pdf',
         storageIdentifiers: {
           id: 'media-123',
-          binaryId: 'binary-789',
+          medplumBinaryId: 'binary-789',
+          medplumMediaId: 'media-123',
           url: 'Binary/binary-789',
         },
       });
@@ -373,7 +374,9 @@ describe('MedplumAttachmentManager', () => {
     it('should reconstruct AttachmentFile from storage metadata', () => {
       const storageMetadata = {
         id: 'media-123',
-        binaryId: 'binary-123',
+        medplumBinaryId: 'binary-123',
+        medplumMediaId: 'media-123',
+        url: 'Binary/binary-123',
       };
 
       const attachmentFile = manager.reconstructAttachmentFile(storageMetadata);
@@ -385,9 +388,10 @@ describe('MedplumAttachmentManager', () => {
       expect(typeof attachmentFile.delete).toBe('function');
     });
 
-    it('should reconstruct AttachmentFile from URL when binaryId is missing', () => {
+    it('should reconstruct AttachmentFile from URL when medplumBinaryId is missing', () => {
       const storageMetadata = {
         id: 'media-456',
+        medplumMediaId: 'media-456',
         url: 'Binary/binary-456',
       };
 
@@ -397,11 +401,11 @@ describe('MedplumAttachmentManager', () => {
       expect(typeof attachmentFile.read).toBe('function');
     });
 
-    it('should throw error if metadata has neither binaryId nor valid url', () => {
+    it('should throw error if metadata has neither medplumBinaryId nor valid url', () => {
       const invalidMetadata = { id: 'test-id' };
 
       expect(() => manager.reconstructAttachmentFile(invalidMetadata)).toThrow(
-        'Storage metadata must contain binaryId or a url with Binary reference',
+        'Storage identifiers must contain medplumBinaryId or a url with Binary reference',
       );
     });
 
@@ -412,7 +416,7 @@ describe('MedplumAttachmentManager', () => {
       };
 
       expect(() => manager.reconstructAttachmentFile(invalidMetadata)).toThrow(
-        'Storage metadata must contain binaryId or a url with Binary reference',
+        'Storage identifiers must contain medplumBinaryId or a url with Binary reference',
       );
     });
   });
@@ -421,7 +425,9 @@ describe('MedplumAttachmentManager', () => {
     let attachmentFile: any;
     const storageMetadata = {
       id: 'media-123',
-      binaryId: 'binary-123',
+      medplumBinaryId: 'binary-123',
+      medplumMediaId: 'media-123',
+      url: 'Binary/binary-123',
     };
 
     beforeEach(() => {
