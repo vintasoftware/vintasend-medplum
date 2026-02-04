@@ -21,6 +21,7 @@ import type {
   DatabaseOneOffNotification,
   OneOffNotificationInput,
 } from 'vintasend/dist/types/one-off-notification';
+import type { MedplumStorageIdentifiers } from './types';
 
 type MedplumNotificationBackendOptions = {
   emailNotificationSubjectExtensionUrl?: string;
@@ -577,49 +578,69 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   /* Attachment management methods */
 
   /**
-   * Helper: Convert FileAttachment to Buffer
+   * Store an attachment file record in the backend's database (Media resource).
+   * This is called after the AttachmentManager uploads a file and returns storageIdentifiers.
+   * The backend stores file metadata along with the storageIdentifiers for later retrieval.
    */
-  private async fileToBuffer(file: FileAttachment, filename: string): Promise<Buffer> {
-    if (Buffer.isBuffer(file)) {
-      return file;
+  async storeAttachmentFileRecord(record: AttachmentFileRecord): Promise<void> {
+    const storageIds = record.storageIdentifiers as MedplumStorageIdentifiers;
+
+    // Create a Media resource in Medplum to store file metadata
+    // This is the backend's database record for the file
+    const media: Media = {
+      resourceType: 'Media',
+      status: 'completed',
+      meta: {
+        tag: [{ code: 'vintasend-backend-attachment-metadata' }],
+      },
+      content: {
+        contentType: record.contentType,
+        url: storageIds.url,
+        size: record.size,
+        title: record.filename,
+        creation: record.createdAt.toISOString(),
+      },
+      identifier: [
+        {
+          system: 'http://vintasend.com/fhir/attachment-checksum',
+          value: record.checksum,
+        },
+        {
+          system: 'http://vintasend.com/fhir/binary-id',
+          value: storageIds.medplumBinaryId,
+        },
+      ],
+    };
+
+    // Store storageIdentifiers as JSON string in an extension
+    // This keeps identifiers opaque - backend doesn't inspect specific fields
+    media.extension = media.extension || [];
+    media.extension.push({
+      url: 'http://vintasend.com/fhir/StructureDefinition/storage-identifiers',
+      valueString: JSON.stringify(storageIds),
+    });
+
+    await this.medplum.createResource(media);
+  }
+
+  /**
+   * Get an attachment file record from the backend's database.
+   * Reads the Media resource created by storeAttachmentFileRecord().
+   */
+  async getAttachmentFileRecord(fileId: string): Promise<AttachmentFileRecord | null> {
+    try {
+      const media = await this.medplum.readResource('Media', fileId);
+      return this.mediaToAttachmentFileRecord(media);
+    } catch {
+      return null;
     }
-
-    if (typeof file === 'string') {
-      // File path - read from filesystem
-      const fs = await import('node:fs/promises');
-      return await fs.readFile(file);
-    }
-
-    // ReadableStream or Readable
-    const chunks: Buffer[] = [];
-
-    if ('getReader' in file) {
-      // Web ReadableStream
-      const reader = file.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(Buffer.from(value));
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    } else {
-      // Node.js Readable
-      for await (const chunk of file) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-    }
-
-    return Buffer.concat(chunks);
   }
 
   /**
    * Helper: Convert FHIR Media resource to AttachmentFileRecord
    * Extracts metadata directly from the Media resource using the same logic as MedplumAttachmentManager.getFile
    */
-  private async mediaToAttachmentFileRecord(media: Media): Promise<AttachmentFileRecord | null> {
+  private mediaToAttachmentFileRecord(media: Media): AttachmentFileRecord | null {
     if (!media.id) {
       throw new Error('Invalid Media resource: missing id');
     }
@@ -648,18 +669,21 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     );
     const checksum = checksumIdentifier?.value || '';
 
+    // Create proper MedplumStorageIdentifiers with correct field names
+    const storageIdentifiers: MedplumStorageIdentifiers = {
+      id: media.id,
+      medplumBinaryId: binaryId || '',
+      medplumMediaId: media.id,
+      url: media.content.url || '',
+    };
+
     return {
       id: media.id,
       filename: media.content.title || 'untitled',
       contentType: media.content.contentType || 'application/octet-stream',
       size: media.content.size || 0,
       checksum,
-      storageIdentifiers: {
-        id: media.id,
-        url: media.content.url,
-        binaryId: binaryId,
-        creation: media.content.creation,
-      },
+      storageIdentifiers,
       createdAt: media.meta?.lastUpdated ? new Date(media.meta.lastUpdated) : new Date(),
       updatedAt: media.meta?.lastUpdated ? new Date(media.meta.lastUpdated) : new Date(),
     };
@@ -687,27 +711,18 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     return manager.reconstructAttachmentFile(fileRecord.storageIdentifiers);
   }
 
-  async getAttachmentFile(fileId: string): Promise<AttachmentFileRecord | null> {
-    try {
-      const media = await this.medplum.readResource('Media', fileId);
-      return this.mediaToAttachmentFileRecord(media);
-    } catch {
-      return null;
-    }
-  }
-
   async findAttachmentFileByChecksum(checksum: string): Promise<AttachmentFileRecord | null> {
     try {
       const results = await this.medplum.searchResources(
         'Media',
-        `identifier=${checksum}&_tag=attachment-file`
+        `identifier=${checksum}&_tag=vintasend-backend-attachment-metadata`
       );
 
       if (results.length === 0) {
         return null;
       }
 
-      const fileRecord = await this.mediaToAttachmentFileRecord(results[0]);
+      const fileRecord = this.mediaToAttachmentFileRecord(results[0]);
       return fileRecord;
     } catch {
       return null;
@@ -727,15 +742,17 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       const identifierQuery = checksums.join(',');
       const results = await this.medplum.searchResources(
         'Media',
-        `identifier=${identifierQuery}&_tag=attachment-file`
+        `identifier=${identifierQuery}&_tag=vintasend-backend-attachment-metadata`
       );
 
       // Map results by checksum
       const filesByChecksum = new Map<string, AttachmentFileRecord>();
       for (const media of results) {
-        const checksum = media.identifier?.[0]?.value;
+        const checksum = media.identifier?.find(
+          (id) => id.system === 'http://vintasend.com/fhir/attachment-checksum'
+        )?.value;
         if (checksum) {
-          const fileRecord = await this.mediaToAttachmentFileRecord(media);
+          const fileRecord = this.mediaToAttachmentFileRecord(media);
           if (fileRecord) {
             filesByChecksum.set(checksum, fileRecord);
           }
@@ -751,6 +768,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   /**
    * Helper: Process attachments and return payload items
    * Optimizes by batching checksum lookups
+   * Works with any AttachmentManager implementation
    */
   private async processAttachments(
     attachments: NotificationAttachment[]
@@ -791,14 +809,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     const referencedFiles = await Promise.all(
       fileReferences.map(async ({ fileId }) => ({
         fileId,
-        record: await this.getAttachmentFile(fileId)
+        record: await this.getAttachmentFileRecord(fileId)
       }))
     );
 
-    // Calculate checksums for new uploads
+    // Calculate checksums for new uploads using manager's fileToBuffer
     const uploadsWithChecksums = await Promise.all(
       newUploads.map(async (upload) => {
-        const buffer = await this.fileToBuffer(upload.file, upload.filename);
+        const buffer = await manager.fileToBuffer(upload.file);
         const checksum = await manager.calculateChecksum(buffer);
         return { ...upload, buffer, checksum };
       })
@@ -833,12 +851,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         // File already exists, reuse it
         fileRecord = existingFile;
       } else {
-        // Upload new file
+        // Upload new file to the manager
         fileRecord = await manager.uploadFile(
           upload.file,
           upload.filename,
           upload.contentType
         );
+        // Store the record in the backend's database
+        await this.storeAttachmentFileRecord(fileRecord);
       }
 
       fileRecords.push({
@@ -866,49 +886,48 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   async deleteAttachmentFile(fileId: string): Promise<void> {
+    const manager = this.getAttachmentManager();
+
     // Check if file exists first
-    const fileRecord = await this.getAttachmentFile(fileId);
+    const fileRecord = await this.getAttachmentFileRecord(fileId);
     if (!fileRecord) {
       // File not found, return early
       return;
     }
 
     // Check if file is still referenced by any notifications
-    const communications = await this.medplum.searchResources('Communication', {
-      _tag: 'notification',
-    });
-
-    const isReferenced = communications.some((comm) =>
-      comm.payload?.some((p) => p.contentAttachment?.url?.includes(fileId))
-    );
-
-    if (isReferenced) {
+    if (await this.isFileReferencedByNotifications(fileId)) {
       throw new Error('Cannot delete attachment file: still referenced by notifications');
     }
 
-    // Delete from storage backend
-    if (fileRecord && this.attachmentManager) {
-      await this.attachmentManager.deleteFileByIdentifiers(fileRecord.storageIdentifiers);
-    }
+    // Delete from storage backend using storageIdentifiers
+    await manager.deleteFileByIdentifiers(fileRecord.storageIdentifiers);
 
-    // Delete Binary resource if it exists
-    if (fileRecord.storageIdentifiers?.url) {
-      const binaryId = (fileRecord.storageIdentifiers.url as string).replace('Binary/', '');
-      try {
-        await this.medplum.deleteResource('Binary', binaryId);
-      } catch {
-        // Binary may not exist or already deleted
-      }
-    }
-
-    // Delete Media resource
+    // Delete backend's database record (Media resource)
     await this.medplum.deleteResource('Media', fileId);
   }
 
+  /**
+   * Check if a file is referenced by any active notifications
+   */
+  private async isFileReferencedByNotifications(fileId: string): Promise<boolean> {
+    try {
+      const communications = await this.medplum.searchResources('Communication', {
+        _tag: 'notification',
+      });
+
+      return communications.some((comm) =>
+        comm.payload?.some((p) => p.contentAttachment?.url?.includes(fileId))
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async getOrphanedAttachmentFiles(): Promise<AttachmentFileRecord[]> {
-    // Get all Media resources tagged as attachment-files
+    // Get all backend's file metadata records (Media resources tagged as backend metadata)
     const allMedia = await this.medplum.searchResources('Media', {
-      _tag: 'attachment-file',
+      _tag: 'vintasend-backend-attachment-metadata',
     });
 
     // Get all notifications
@@ -931,9 +950,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Filter orphaned media
     const orphaned = allMedia.filter((media) => media.id && !referencedIds.has(media.id));
-    const fileRecords = await Promise.all(
-      orphaned.map((media) => this.mediaToAttachmentFileRecord(media))
-    );
+    const fileRecords: (AttachmentFileRecord | null)[] = [];
+    for (const media of orphaned) {
+      fileRecords.push(this.mediaToAttachmentFileRecord(media));
+    }
     return fileRecords.filter((record): record is AttachmentFileRecord => record !== null);
   }
 

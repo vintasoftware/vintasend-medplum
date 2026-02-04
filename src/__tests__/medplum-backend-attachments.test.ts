@@ -26,7 +26,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
     id: 'media-123',
     status: 'completed',
     meta: {
-      tag: [{ code: 'attachment-file' }],
+      tag: [{ code: 'vintasend-backend-attachment-metadata' }],
     },
     content: {
       contentType: 'application/pdf',
@@ -115,12 +115,12 @@ describe('MedplumNotificationBackend - Attachments', () => {
     backend.injectAttachmentManager(mockAttachmentManager);
   });
 
-  describe('getAttachmentFile', () => {
+  describe('getAttachmentFileRecord', () => {
     it('should retrieve an attachment file by ID', async () => {
       // Create the media resource in the mock client's in-memory storage
       const createdMedia = await medplumClient.createResource(mockMedia);
 
-      const result = await backend.getAttachmentFile(createdMedia.id as string);
+      const result = await backend.getAttachmentFileRecord(createdMedia.id as string);
 
       expect(result).toMatchObject({
         id: createdMedia.id,
@@ -132,7 +132,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
     });
 
     it('should return null if file not found', async () => {
-      const result = await backend.getAttachmentFile('nonexistent');
+      const result = await backend.getAttachmentFileRecord('nonexistent');
 
       expect(result).toBeNull();
     });
@@ -174,17 +174,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
       ).rejects.toThrow();
     });
 
-    it('should delete Binary resource if referenced', async () => {
-      const createdMedia = await medplumClient.createResource(mockMedia);
-      const createdBinary = await medplumClient.createResource(mockBinary);
 
-      await backend.deleteAttachmentFile(createdMedia.id as string);
-
-      // Verify the binary resource was deleted
-      await expect(
-        medplumClient.readResource('Binary', createdBinary.id as string),
-      ).rejects.toThrow();
-    });
 
     it('should return early if file not found', async () => {
       await backend.deleteAttachmentFile('nonexistent');
@@ -408,16 +398,41 @@ describe('MedplumNotificationBackend - Attachments', () => {
     });
 
     it('should batch checksum lookups for multiple attachments', async () => {
+      // Create existing media resources with the checksums that will be searched for
       await medplumClient.createResource({
         ...mockMedia,
         id: 'media-existing-1',
-        identifier: [{ system: 'checksum', value: 'checksum1' }],
+        identifier: [
+          {
+            system: 'http://vintasend.com/fhir/attachment-checksum',
+            value: 'checksum1',
+          },
+          {
+            system: 'http://vintasend.com/fhir/binary-id',
+            value: 'binary-123',
+          },
+        ],
+        meta: {
+          tag: [{ code: 'vintasend-backend-attachment-metadata' }],
+        },
       });
 
       await medplumClient.createResource({
         ...mockMedia,
         id: 'media-existing-2',
-        identifier: [{ system: 'checksum', value: 'checksum2' }],
+        identifier: [
+          {
+            system: 'http://vintasend.com/fhir/attachment-checksum',
+            value: 'checksum2',
+          },
+          {
+            system: 'http://vintasend.com/fhir/binary-id',
+            value: 'binary-123',
+          },
+        ],
+        meta: {
+          tag: [{ code: 'vintasend-backend-attachment-metadata' }],
+        },
       });
 
       const input = {
@@ -444,14 +459,19 @@ describe('MedplumNotificationBackend - Attachments', () => {
         return Promise.resolve(`checksum${callCount}`);
       });
 
-      // Mock upload for the new file
+      // Mock upload for the new file (only file3 will be uploaded)
       (mockAttachmentManager.uploadFile as any).mockResolvedValue({
         id: 'media-new-3',
         filename: 'file3.pdf',
         contentType: 'application/pdf',
         size: 8,
         checksum: 'checksum3',
-        storageMetadata: {},
+        storageIdentifiers: {
+          id: 'media-new-3',
+          medplumBinaryId: 'binary-new-3',
+          medplumMediaId: 'media-new-3',
+          url: 'Binary/binary-new-3',
+        },
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -461,7 +481,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
       // Should have calculated all checksums
       expect(mockAttachmentManager.calculateChecksum).toHaveBeenCalledTimes(3);
 
-      // Should only upload the one file that didn't exist
+      // Should only upload the one file that didn't exist (files 1 and 2 already exist)
       expect(mockAttachmentManager.uploadFile).toHaveBeenCalledTimes(1);
 
       expect(result.id).toBeDefined();
@@ -473,10 +493,23 @@ describe('MedplumNotificationBackend - Attachments', () => {
         id: 'media-ref-1',
       });
 
+      // Create existing media with checksum that will match one of the new uploads
       await medplumClient.createResource({
         ...mockMedia,
-        id: 'media-ref-2',
-        identifier: [{ system: 'checksum', value: 'checksum-existing' }],
+        id: 'media-existing-checksum',
+        identifier: [
+          {
+            system: 'http://vintasend.com/fhir/attachment-checksum',
+            value: 'checksum-existing',
+          },
+          {
+            system: 'http://vintasend.com/fhir/binary-id',
+            value: 'binary-123',
+          },
+        ],
+        meta: {
+          tag: [{ code: 'vintasend-backend-attachment-metadata' }],
+        },
       });
 
       const input = {
@@ -510,7 +543,12 @@ describe('MedplumNotificationBackend - Attachments', () => {
         contentType: 'application/pdf',
         size: 11,
         checksum: 'checksum-new',
-        storageMetadata: {},
+        storageIdentifiers: {
+          id: 'media-brand-new',
+          medplumBinaryId: 'binary-brand-new',
+          medplumMediaId: 'media-brand-new',
+          url: 'Binary/binary-brand-new',
+        },
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -552,7 +590,12 @@ describe('MedplumNotificationBackend - Attachments', () => {
         contentType: 'application/pdf',
         size: fileBuffer.length,
         checksum: 'abc123',
-        storageMetadata: {},
+        storageIdentifiers: {
+          id: 'media-new-123',
+          medplumBinaryId: 'binary-new-123',
+          medplumMediaId: 'media-new-123',
+          url: 'Binary/binary-new-123',
+        },
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -703,7 +746,12 @@ describe('MedplumNotificationBackend - Attachments', () => {
         contentType: 'application/pdf',
         size: fileBuffer.length,
         checksum: 'abc123',
-        storageMetadata: {},
+        storageIdentifiers: {
+          id: 'media-one-off-123',
+          medplumBinaryId: 'binary-one-off-123',
+          medplumMediaId: 'media-one-off-123',
+          url: 'Binary/binary-one-off-123',
+        },
         createdAt: new Date(),
         updatedAt: new Date(),
       });
