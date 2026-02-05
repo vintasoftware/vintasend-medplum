@@ -123,9 +123,11 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   async getAllPendingNotifications(): Promise<AnyDatabaseNotification<Config>[]> {
+    const now = new Date().toISOString();
     const communications = await this.medplum.searchResources('Communication', {
       status: 'in-progress',
       _tag: 'notification',
+      'sent:le': now,
     });
     return communications.map((comm) => this.mapToDatabaseNotification(comm));
   }
