@@ -1,6 +1,7 @@
 import { MockClient } from '@medplum/mock';
 import type { Communication } from '@medplum/fhirtypes';
 import { MedplumNotificationBackend } from '../medplum-backend';
+import type { NotificationFilter } from 'vintasend/dist/services/notification-backends/base-notification-backend';
 import type { BaseAttachmentManager } from 'vintasend/dist/services/attachment-manager/base-attachment-manager';
 import type { BaseNotificationTypeConfig } from 'vintasend/dist/types/notification-type-config';
 
@@ -485,6 +486,107 @@ describe('MedplumNotificationBackend', () => {
         userId: 'user-123',
         notificationType: 'EMAIL',
       });
+    });
+  });
+
+  describe('filterNotifications', () => {
+    it('should map sendAfterRange to sent date comparators in FHIR search params', async () => {
+      const from = new Date('2026-01-01T00:00:00.000Z');
+      const to = new Date('2026-01-31T23:59:59.999Z');
+
+      const searchResourcesSpy = jest
+        .spyOn(medplumClient, 'searchResources')
+        .mockResolvedValue([] as any);
+
+      const filter: NotificationFilter<TestConfig> = {
+        sendAfterRange: {
+          from,
+          to,
+        },
+      };
+
+      const result = await backend.filterNotifications(filter, 1, 25);
+
+      expect(searchResourcesSpy).toHaveBeenCalledWith('Communication', {
+        _tag: 'notification',
+        'sent:ge': from.toISOString(),
+        'sent:le': to.toISOString(),
+        _count: '25',
+        _offset: '25',
+      });
+      expect(result).toEqual([]);
+    });
+
+    it('should reject NOT filter on sendAfterRange', async () => {
+      const filter: NotificationFilter<TestConfig> = {
+        not: {
+          sendAfterRange: {
+            from: new Date('2026-01-01T00:00:00.000Z'),
+          },
+        },
+      };
+
+      await expect(backend.filterNotifications(filter, 0, 10)).rejects.toThrow(
+        'NOT filter on sendAfterRange is not supported by MedplumNotificationBackend.',
+      );
+    });
+  });
+
+  describe('getFilterCapabilities', () => {
+    it('should return filter capabilities for Medplum', () => {
+      const capabilities = backend.getFilterCapabilities();
+
+      expect(capabilities).toBeDefined();
+      expect(typeof capabilities).toBe('object');
+    });
+
+    it('should mark logical.or as unsupported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['logical.or']).toBe(false);
+    });
+
+    it('should mark logical.notNested as unsupported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['logical.notNested']).toBe(false);
+    });
+
+    it('should mark negation.createdAtRange as unsupported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['negation.createdAtRange']).toBe(false);
+    });
+
+    it('should mark negation.sentAtRange as unsupported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['negation.sentAtRange']).toBe(false);
+    });
+
+    it('should mark negation.sendAfterRange as unsupported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['negation.sendAfterRange']).toBe(false);
+    });
+
+    it('should mark logical.and as supported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['logical.and']).toBe(true);
+    });
+
+    it('should mark logical.not as supported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['logical.not']).toBe(true);
+    });
+
+    it('should mark all standard fields as supported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['fields.status']).toBe(true);
+      expect(capabilities['fields.notificationType']).toBe(true);
+      expect(capabilities['fields.adapterUsed']).toBe(true);
+      expect(capabilities['fields.userId']).toBe(true);
+      expect(capabilities['fields.bodyTemplate']).toBe(true);
+      expect(capabilities['fields.subjectTemplate']).toBe(true);
+      expect(capabilities['fields.contextName']).toBe(true);
+      expect(capabilities['fields.sendAfterRange']).toBe(true);
+      expect(capabilities['fields.createdAtRange']).toBe(true);
+      expect(capabilities['fields.sentAtRange']).toBe(true);
     });
   });
 });
