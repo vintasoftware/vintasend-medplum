@@ -507,13 +507,13 @@ describe('MedplumNotificationBackend', () => {
 
       const result = await backend.filterNotifications(filter, 1, 25);
 
-      expect(searchResourcesSpy).toHaveBeenCalledWith('Communication', {
-        _tag: 'notification',
-        'sent:ge': from.toISOString(),
-        'sent:le': to.toISOString(),
-        _count: '25',
-        _offset: '25',
-      });
+      expect(searchResourcesSpy).toHaveBeenCalledWith('Communication', [
+        ["sent:ge", "2026-01-01T00:00:00.000Z"],
+        ["sent:le", "2026-01-31T23:59:59.999Z"],
+        ["_count", "25"],
+        ["_offset", "25"],
+        ["_tag", "notification"]
+      ]);
       expect(result).toEqual([]);
     });
 

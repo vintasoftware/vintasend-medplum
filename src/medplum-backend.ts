@@ -510,11 +510,12 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async filterAllInAppUnreadNotifications(
     refenrenceString: Config['UserIdType']
   ): Promise<DatabaseNotification<Config>[]> {
-    const communications = await this.medplum.searchResources('Communication', {
-      status: 'completed',
-      _tag: 'notification,in-app',
-      recipient: refenrenceString,
-    });
+    const communications = await this.medplum.searchResources('Communication', [
+      ['status', 'completed'],
+      ['_tag', 'notification'],
+      ['_tag', 'in-app'],
+      ['recipient', refenrenceString as string],
+    ]);
     return communications
       .map((comm) => this.mapToDatabaseNotification(comm))
       .filter((notif): notif is DatabaseNotification<Config> => 'userId' in notif && !notif.readAt);
@@ -525,13 +526,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     page: number,
     pageSize: number
   ): Promise<DatabaseNotification<Config>[]> {
-    const communications = await this.medplum.searchResources('Communication', {
-      status: 'completed',
-      _tag: 'notification,in-app',
-      recipient: refenrenceString,
-      _count: pageSize.toString(),
-      _offset: (page * pageSize).toString(),
-    });
+    const communications = await this.medplum.searchResources('Communication', [
+      ['status', 'completed'],
+      ['_tag', 'notification'],
+      ['_tag', 'in-app'],
+      ['recipient', refenrenceString as string],
+      ['_count', pageSize.toString()],
+      ['_offset', (page * pageSize).toString()],
+    ]);
     return communications
       .map((comm) => this.mapToDatabaseNotification(comm))
       .filter((notif): notif is DatabaseNotification<Config> => 'userId' in notif && !notif.readAt);
@@ -692,9 +694,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   async getAllOneOffNotifications(): Promise<DatabaseOneOffNotification<Config>[]> {
-    const communications = await this.medplum.searchResources('Communication', {
-      _tag: 'notification,one-off',
-    });
+    const communications = await this.medplum.searchResources('Communication', [
+      ['_tag', 'notification'],
+      ['_tag', 'one-off'],
+    ]);
     return communications.map((comm) => this.mapToDatabaseNotification(comm) as DatabaseOneOffNotification<Config>);
   }
 
@@ -702,11 +705,12 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     page: number,
     pageSize: number,
   ): Promise<DatabaseOneOffNotification<Config>[]> {
-    const communications = await this.medplum.searchResources('Communication', {
-      _tag: 'notification,one-off',
-      _count: pageSize.toString(),
-      _offset: (page * pageSize).toString(),
-    });
+    const communications = await this.medplum.searchResources('Communication', [
+      ['_tag', 'notification'],
+      ['_tag', 'one-off'],
+      ['_count', pageSize.toString()],
+      ['_offset', (page * pageSize).toString()],
+    ]);
     return communications.map((comm) => this.mapToDatabaseNotification(comm) as DatabaseOneOffNotification<Config>);
   }
 
@@ -745,16 +749,20 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     }
 
     const searchParams = this.buildFhirSearchParams(filter);
-    this.ensureNotificationTag(searchParams);
     searchParams._count = pageSize.toString();
     searchParams._offset = (page * pageSize).toString();
 
-    const communications = await this.medplum.searchResources('Communication', searchParams);
+    // Convert to string[][] so that _tag values become repeated AND parameters
+    // (comma-separated _tag in a single param means OR in FHIR, which is wrong here)
+    const searchTuples = this.paramsToSearchTuples(searchParams);
+
+    const communications = await this.medplum.searchResources('Communication', searchTuples);
     return communications.map((comm) => this.mapToDatabaseNotification(comm));
   }
 
   /**
    * Ensure the `_tag` parameter always includes `notification`.
+   * Mutates the params record in place.
    */
   private ensureNotificationTag(params: Record<string, string>): void {
     if (params._tag) {
@@ -764,6 +772,32 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     } else {
       params._tag = 'notification';
     }
+  }
+
+  /**
+   * Convert a `Record<string, string>` FHIR search params object into `string[][]` tuples.
+   *
+   * This is needed because the `_tag` parameter uses comma-separated values internally
+   * to accumulate multiple tags (notificationType + contextName + 'notification'), but
+   * **FHIR treats comma-separated token values as OR**. To get AND semantics we must
+   * repeat the parameter: `_tag=notification&_tag=SMS` instead of `_tag=notification,SMS`.
+   *
+   * All other parameters are passed through as single key-value pairs.
+   */
+  private paramsToSearchTuples(params: Record<string, string>): string[][] {
+    this.ensureNotificationTag(params);
+    const tuples: string[][] = [];
+    for (const [key, value] of Object.entries(params)) {
+      if (key === '_tag') {
+        // Split into separate entries for AND semantics
+        for (const tag of value.split(',')) {
+          tuples.push(['_tag', tag.trim()]);
+        }
+      } else {
+        tuples.push([key, value]);
+      }
+    }
+    return tuples;
   }
 
   /**
