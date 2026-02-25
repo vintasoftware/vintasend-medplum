@@ -2,7 +2,11 @@ import { MedplumClient } from '@medplum/core';
 import { Attachment, Communication, Media } from '@medplum/fhirtypes';
 import type { BaseAttachmentManager } from 'vintasend/dist/services/attachment-manager/base-attachment-manager';
 import type { BaseLogger } from 'vintasend/dist/services/loggers/base-logger';
-import type { BaseNotificationBackend, NotificationFilter, NotificationFilterFields } from 'vintasend/dist/services/notification-backends/base-notification-backend';
+import type {
+  BaseNotificationBackend,
+  NotificationFilter,
+  NotificationFilterFields,
+} from 'vintasend/dist/services/notification-backends/base-notification-backend';
 import { isFieldFilter } from 'vintasend/dist/services/notification-backends/base-notification-backend';
 import type {
   AttachmentFile,
@@ -28,6 +32,18 @@ import type { MedplumStorageIdentifiers } from './types';
 type MedplumNotificationBackendOptions = {
   emailNotificationSubjectExtensionUrl?: string;
 };
+
+type StringFilterLookup = {
+  lookup: 'exact' | 'startsWith' | 'endsWith' | 'includes';
+  value: string;
+  caseSensitive?: boolean;
+};
+
+type StringFieldFilter = string | StringFilterLookup;
+
+function isStringFilterLookup(value: StringFieldFilter): value is StringFilterLookup {
+  return typeof value === 'object' && value !== null && 'lookup' in value && 'value' in value;
+}
 
 /** FHIR identifier systems used by MedplumNotificationBackend for searchable fields. */
 const IDENTIFIER_SYSTEMS = {
@@ -81,7 +97,33 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       'negation.sendAfterRange': false,
       'negation.createdAtRange': false,
       'negation.sentAtRange': false,
+      'stringLookups.startsWith': false,
+      'stringLookups.endsWith': false,
+      'stringLookups.includes': false,
+      'stringLookups.caseInsensitive': false,
     };
+  }
+
+  private resolveStringFieldForFhir(fieldName: string, value: StringFieldFilter): string {
+    if (!isStringFilterLookup(value)) {
+      return value;
+    }
+
+    if (value.lookup !== 'exact') {
+      throw new Error(
+        `${fieldName} lookup '${value.lookup}' is not supported by MedplumNotificationBackend. ` +
+        "Only exact string matching is supported.",
+      );
+    }
+
+    if (value.caseSensitive === false) {
+      throw new Error(
+        `${fieldName} lookup with caseSensitive=false is not supported by MedplumNotificationBackend. ` +
+        'Only case-sensitive exact matching is supported.',
+      );
+    }
+
+    return value.value;
   }
 
   /**
@@ -882,9 +924,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // contextName → _tag (appended to existing _tag)
     if (filter.contextName !== undefined) {
+      const contextName = this.resolveStringFieldForFhir('contextName', filter.contextName);
       params._tag = params._tag
-        ? `${params._tag},${filter.contextName}`
-        : filter.contextName;
+        ? `${params._tag},${contextName}`
+        : contextName;
     }
 
     // UserId → recipient
@@ -904,16 +947,18 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // bodyTemplate → identifier search with system
     if (filter.bodyTemplate !== undefined) {
+      const bodyTemplate = this.resolveStringFieldForFhir('bodyTemplate', filter.bodyTemplate);
       params.identifier = params.identifier
-        ? `${params.identifier},${IDENTIFIER_SYSTEMS.bodyTemplate}|${filter.bodyTemplate}`
-        : `${IDENTIFIER_SYSTEMS.bodyTemplate}|${filter.bodyTemplate}`;
+        ? `${params.identifier},${IDENTIFIER_SYSTEMS.bodyTemplate}|${bodyTemplate}`
+        : `${IDENTIFIER_SYSTEMS.bodyTemplate}|${bodyTemplate}`;
     }
 
     // subjectTemplate → identifier search with system
     if (filter.subjectTemplate !== undefined) {
+      const subjectTemplate = this.resolveStringFieldForFhir('subjectTemplate', filter.subjectTemplate);
       params.identifier = params.identifier
-        ? `${params.identifier},${IDENTIFIER_SYSTEMS.subjectTemplate}|${filter.subjectTemplate}`
-        : `${IDENTIFIER_SYSTEMS.subjectTemplate}|${filter.subjectTemplate}`;
+        ? `${params.identifier},${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`
+        : `${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`;
     }
 
     // sendAfterRange → sent date comparators
@@ -985,9 +1030,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     }
 
     if (filter.contextName !== undefined) {
+      const contextName = this.resolveStringFieldForFhir('contextName', filter.contextName);
       params['_tag:not'] = params['_tag:not']
-        ? `${params['_tag:not']},${filter.contextName}`
-        : filter.contextName;
+        ? `${params['_tag:not']},${contextName}`
+        : contextName;
     }
 
     if (filter.userId !== undefined) {
@@ -1004,15 +1050,17 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     }
 
     if (filter.bodyTemplate !== undefined) {
+      const bodyTemplate = this.resolveStringFieldForFhir('bodyTemplate', filter.bodyTemplate);
       params['identifier:not'] = params['identifier:not']
-        ? `${params['identifier:not']},${IDENTIFIER_SYSTEMS.bodyTemplate}|${filter.bodyTemplate}`
-        : `${IDENTIFIER_SYSTEMS.bodyTemplate}|${filter.bodyTemplate}`;
+        ? `${params['identifier:not']},${IDENTIFIER_SYSTEMS.bodyTemplate}|${bodyTemplate}`
+        : `${IDENTIFIER_SYSTEMS.bodyTemplate}|${bodyTemplate}`;
     }
 
     if (filter.subjectTemplate !== undefined) {
+      const subjectTemplate = this.resolveStringFieldForFhir('subjectTemplate', filter.subjectTemplate);
       params['identifier:not'] = params['identifier:not']
-        ? `${params['identifier:not']},${IDENTIFIER_SYSTEMS.subjectTemplate}|${filter.subjectTemplate}`
-        : `${IDENTIFIER_SYSTEMS.subjectTemplate}|${filter.subjectTemplate}`;
+        ? `${params['identifier:not']},${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`
+        : `${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`;
     }
 
     if (filter.sentAtRange) {

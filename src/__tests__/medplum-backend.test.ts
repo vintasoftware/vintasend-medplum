@@ -530,6 +530,81 @@ describe('MedplumNotificationBackend', () => {
         'NOT filter on sendAfterRange is not supported by MedplumNotificationBackend.',
       );
     });
+
+    it('should support exact lookup object for contextName', async () => {
+      const searchResourcesSpy = jest
+        .spyOn(medplumClient, 'searchResources')
+        .mockResolvedValue([] as any);
+
+      const filter = {
+        contextName: {
+          lookup: 'exact',
+          value: 'testContext',
+        },
+      } as unknown as NotificationFilter<TestConfig>;
+
+      await backend.filterNotifications(filter, 0, 10);
+
+      expect(searchResourcesSpy).toHaveBeenCalledWith('Communication', [
+        ['_tag', 'notification'],
+        ['_tag', 'testContext'],
+        ['_count', '10'],
+        ['_offset', '0'],
+      ]);
+    });
+
+    it('should reject startsWith lookup for bodyTemplate', async () => {
+      const filter = {
+        bodyTemplate: {
+          lookup: 'startsWith',
+          value: 'welcome',
+        },
+      } as unknown as NotificationFilter<TestConfig>;
+
+      await expect(backend.filterNotifications(filter, 0, 10)).rejects.toThrow(
+        "bodyTemplate lookup 'startsWith' is not supported by MedplumNotificationBackend. Only exact string matching is supported.",
+      );
+    });
+
+    it('should reject endsWith lookup for subjectTemplate', async () => {
+      const filter = {
+        subjectTemplate: {
+          lookup: 'endsWith',
+          value: 'v1',
+        },
+      } as unknown as NotificationFilter<TestConfig>;
+
+      await expect(backend.filterNotifications(filter, 0, 10)).rejects.toThrow(
+        "subjectTemplate lookup 'endsWith' is not supported by MedplumNotificationBackend. Only exact string matching is supported.",
+      );
+    });
+
+    it('should reject includes lookup for contextName', async () => {
+      const filter = {
+        contextName: {
+          lookup: 'includes',
+          value: 'context',
+        },
+      } as unknown as NotificationFilter<TestConfig>;
+
+      await expect(backend.filterNotifications(filter, 0, 10)).rejects.toThrow(
+        "contextName lookup 'includes' is not supported by MedplumNotificationBackend. Only exact string matching is supported.",
+      );
+    });
+
+    it('should reject case-insensitive exact lookup', async () => {
+      const filter = {
+        contextName: {
+          lookup: 'exact',
+          value: 'testContext',
+          caseSensitive: false,
+        },
+      } as unknown as NotificationFilter<TestConfig>;
+
+      await expect(backend.filterNotifications(filter, 0, 10)).rejects.toThrow(
+        'contextName lookup with caseSensitive=false is not supported by MedplumNotificationBackend. Only case-sensitive exact matching is supported.',
+      );
+    });
   });
 
   describe('getFilterCapabilities', () => {
@@ -587,6 +662,14 @@ describe('MedplumNotificationBackend', () => {
       expect(capabilities['fields.sendAfterRange']).toBe(true);
       expect(capabilities['fields.createdAtRange']).toBe(true);
       expect(capabilities['fields.sentAtRange']).toBe(true);
+    });
+
+    it('should mark string lookups as unsupported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['stringLookups.startsWith']).toBe(false);
+      expect(capabilities['stringLookups.endsWith']).toBe(false);
+      expect(capabilities['stringLookups.includes']).toBe(false);
+      expect(capabilities['stringLookups.caseInsensitive']).toBe(false);
     });
   });
 });
