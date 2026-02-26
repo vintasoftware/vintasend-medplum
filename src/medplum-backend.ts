@@ -50,6 +50,7 @@ const IDENTIFIER_SYSTEMS = {
   bodyTemplate: 'http://vintasend.com/fhir/body-template',
   subjectTemplate: 'http://vintasend.com/fhir/subject-template',
   adapterUsed: 'http://vintasend.com/fhir/adapter-used',
+  gitCommitSha: 'http://vintasend.com/fhir/git-commit-sha',
 } as const;
 
 export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfig> implements BaseNotificationBackend<Config> {
@@ -182,6 +183,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       (id) => id.system === IDENTIFIER_SYSTEMS.adapterUsed
     )?.value || null;
 
+    const gitCommitSha = communication.identifier?.find(
+      (id) => id.system === IDENTIFIER_SYSTEMS.gitCommitSha
+    )?.value || null;
+
     const baseNotification = {
       id: notificationId,
       notificationType: communication.meta?.tag?.[2]?.code as any,
@@ -196,6 +201,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         communication.status === 'completed' ? 'SENT' : communication.status === 'stopped' ? 'FAILED' : 'PENDING_SEND',
       contextUsed,
       adapterUsed,
+      gitCommitSha,
       sentAt: communication.status === 'completed' ? new Date(communication.sent || new Date()) : null,
       readAt: null,
       createdAt: new Date(communication.meta?.lastUpdated || new Date()),
@@ -298,6 +304,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   async persistNotification(notification: NotificationInput<Config>): Promise<DatabaseNotification<Config>> {
+    const notificationWithOptionalGitCommitSha = notification as NotificationInput<Config> & {
+      gitCommitSha?: string | null;
+    };
+
     // Build base payload with body template
     const payload: Communication['payload'] = notification.bodyTemplate
       ? [
@@ -323,6 +333,12 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     ];
     if (notification.subjectTemplate) {
       identifiers.push({ system: IDENTIFIER_SYSTEMS.subjectTemplate, value: notification.subjectTemplate });
+    }
+    if (notificationWithOptionalGitCommitSha.gitCommitSha) {
+      identifiers.push({
+        system: IDENTIFIER_SYSTEMS.gitCommitSha,
+        value: notificationWithOptionalGitCommitSha.gitCommitSha,
+      });
     }
 
     const communication: Communication = {
@@ -406,6 +422,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     upsert(IDENTIFIER_SYSTEMS.bodyTemplate, notification.bodyTemplate as string | undefined);
     upsert(IDENTIFIER_SYSTEMS.subjectTemplate, notification.subjectTemplate as string | null | undefined);
     upsert(IDENTIFIER_SYSTEMS.adapterUsed, notification.adapterUsed as string | null | undefined);
+    upsert(IDENTIFIER_SYSTEMS.gitCommitSha, notification.gitCommitSha as string | null | undefined);
 
     return updated;
   }
@@ -437,6 +454,18 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       ];
       if (notification.subjectTemplate) {
         bulkIdentifiers.push({ system: IDENTIFIER_SYSTEMS.subjectTemplate, value: notification.subjectTemplate });
+      }
+      const notificationWithOptionalGitCommitSha = notification as Omit<
+        NotificationInput<Config>,
+        'id'
+      > & {
+        gitCommitSha?: string | null;
+      };
+      if (notificationWithOptionalGitCommitSha.gitCommitSha) {
+        bulkIdentifiers.push({
+          system: IDENTIFIER_SYSTEMS.gitCommitSha,
+          value: notificationWithOptionalGitCommitSha.gitCommitSha,
+        });
       }
 
       const communication: Communication = {
@@ -637,6 +666,13 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async persistOneOffNotification(
     notification: Omit<OneOffNotificationInput<Config>, 'id'>,
   ): Promise<DatabaseOneOffNotification<Config>> {
+    const notificationWithOptionalGitCommitSha = notification as Omit<
+      OneOffNotificationInput<Config>,
+      'id'
+    > & {
+      gitCommitSha?: string | null;
+    };
+
     // Build base payload with body template
     const payload: Communication['payload'] = notification.bodyTemplate
       ? [
@@ -662,6 +698,12 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     ];
     if (notification.subjectTemplate) {
       oneOffIdentifiers.push({ system: IDENTIFIER_SYSTEMS.subjectTemplate, value: notification.subjectTemplate });
+    }
+    if (notificationWithOptionalGitCommitSha.gitCommitSha) {
+      oneOffIdentifiers.push({
+        system: IDENTIFIER_SYSTEMS.gitCommitSha,
+        value: notificationWithOptionalGitCommitSha.gitCommitSha,
+      });
     }
 
     const communication: Communication = {

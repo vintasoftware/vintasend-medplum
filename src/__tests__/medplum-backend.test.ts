@@ -140,6 +140,38 @@ describe('MedplumNotificationBackend', () => {
 
       expect(result.sendAfter).toEqual(sendAfter);
     });
+
+    it('should persist gitCommitSha identifier and map it back for regular notification', async () => {
+      const gitCommitSha = 'a'.repeat(40);
+      const input = {
+        userId: 'user-123',
+        notificationType: 'EMAIL' as const,
+        bodyTemplate: 'Test Body',
+        contextName: 'testContext' as keyof TestConfig['ContextMap'],
+        contextParameters: { param1: 'value1' },
+        title: 'Test Title',
+        subjectTemplate: 'Test Subject',
+        extraParams: null,
+        sendAfter: null,
+        gitCommitSha,
+      };
+
+      const createResourceSpy = jest.spyOn(medplumClient, 'createResource');
+      // biome-ignore lint/suspicious/noExplicitAny: testing persisted-field passthrough in backend layer
+      const result = await backend.persistNotification(input as any);
+
+      expect(createResourceSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          identifier: expect.arrayContaining([
+            expect.objectContaining({
+              system: 'http://vintasend.com/fhir/git-commit-sha',
+              value: gitCommitSha,
+            }),
+          ]),
+        }),
+      );
+      expect(result.gitCommitSha).toBe(gitCommitSha);
+    });
   });
 
   describe('markAsSent', () => {
@@ -322,6 +354,76 @@ describe('MedplumNotificationBackend', () => {
         expect(result.firstName).toBe('John');
         expect(result.lastName).toBe('Doe');
       });
+
+      it('should persist gitCommitSha identifier and map it back for one-off notification', async () => {
+        const gitCommitSha = 'b'.repeat(40);
+        const input = {
+          emailOrPhone: 'test@example.com',
+          firstName: 'John',
+          lastName: 'Doe',
+          notificationType: 'EMAIL' as const,
+          bodyTemplate: 'Test Body',
+          contextName: 'testContext' as keyof TestConfig['ContextMap'],
+          contextParameters: { param1: 'value1' },
+          title: 'Test Title',
+          subjectTemplate: 'Test Subject',
+          extraParams: null,
+          sendAfter: null,
+          gitCommitSha,
+        };
+
+        const createResourceSpy = jest.spyOn(medplumClient, 'createResource');
+        // biome-ignore lint/suspicious/noExplicitAny: testing persisted-field passthrough in backend layer
+        const result = await backend.persistOneOffNotification(input as any);
+
+        expect(createResourceSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            identifier: expect.arrayContaining([
+              expect.objectContaining({
+                system: 'http://vintasend.com/fhir/git-commit-sha',
+                value: gitCommitSha,
+              }),
+            ]),
+          }),
+        );
+        expect(result.gitCommitSha).toBe(gitCommitSha);
+      });
+    });
+
+    describe('persistOneOffNotificationUpdate', () => {
+      it('should remove gitCommitSha identifier when update sets it to null', async () => {
+        const existing = await medplumClient.createResource(
+          createMockCommunication({
+            recipient: undefined,
+            extension: [
+              {
+                url: 'http://vintasend.com/fhir/StructureDefinition/emailOrPhone',
+                valueString: 'test@example.com',
+              },
+              {
+                url: 'http://vintasend.com/fhir/StructureDefinition/firstName',
+                valueString: 'John',
+              },
+              {
+                url: 'http://vintasend.com/fhir/StructureDefinition/lastName',
+                valueString: 'Doe',
+              },
+            ],
+            identifier: [
+              {
+                system: 'http://vintasend.com/fhir/git-commit-sha',
+                value: 'c'.repeat(40),
+              },
+            ],
+          }),
+        );
+
+        const updated = await backend.persistOneOffNotificationUpdate(existing.id as string, {
+          gitCommitSha: null,
+        });
+
+        expect(updated.gitCommitSha).toBeNull();
+      });
     });
 
     describe('getOneOffNotification', () => {
@@ -486,6 +588,83 @@ describe('MedplumNotificationBackend', () => {
         userId: 'user-123',
         notificationType: 'EMAIL',
       });
+    });
+
+    it('should map gitCommitSha from identifier and fallback to null when missing', () => {
+      const withGitCommitSha = createMockCommunication({
+        id: 'with-sha',
+        identifier: [
+          {
+            system: 'http://vintasend.com/fhir/body-template',
+            value: '/path/to/template',
+          },
+          {
+            system: 'http://vintasend.com/fhir/git-commit-sha',
+            value: 'd'.repeat(40),
+          },
+        ],
+      });
+
+      const withoutGitCommitSha = createMockCommunication({
+        id: 'without-sha',
+        identifier: [
+          {
+            system: 'http://vintasend.com/fhir/body-template',
+            value: '/path/to/template',
+          },
+        ],
+      });
+
+      const mappedWithSha = backend['mapToDatabaseNotification'](withGitCommitSha as any);
+      const mappedWithoutSha = backend['mapToDatabaseNotification'](withoutGitCommitSha as any);
+
+      expect(mappedWithSha.gitCommitSha).toBe('d'.repeat(40));
+      expect(mappedWithoutSha.gitCommitSha).toBeNull();
+    });
+  });
+
+  describe('persistNotificationUpdate', () => {
+    it('should upsert gitCommitSha identifier when provided', async () => {
+      const existing = await medplumClient.createResource(
+        createMockCommunication({
+          identifier: [
+            {
+              system: 'http://vintasend.com/fhir/body-template',
+              value: '/path/to/template',
+            },
+          ],
+        }),
+      );
+
+      const gitCommitSha = 'e'.repeat(40);
+      const updated = await backend.persistNotificationUpdate(existing.id as string, {
+        gitCommitSha,
+      });
+
+      expect(updated.gitCommitSha).toBe(gitCommitSha);
+    });
+
+    it('should remove gitCommitSha identifier when set to null', async () => {
+      const existing = await medplumClient.createResource(
+        createMockCommunication({
+          identifier: [
+            {
+              system: 'http://vintasend.com/fhir/body-template',
+              value: '/path/to/template',
+            },
+            {
+              system: 'http://vintasend.com/fhir/git-commit-sha',
+              value: 'f'.repeat(40),
+            },
+          ],
+        }),
+      );
+
+      const updated = await backend.persistNotificationUpdate(existing.id as string, {
+        gitCommitSha: null,
+      });
+
+      expect(updated.gitCommitSha).toBeNull();
     });
   });
 
