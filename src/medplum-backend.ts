@@ -32,6 +32,7 @@ import type { MedplumStorageIdentifiers } from './types';
 
 type MedplumNotificationBackendOptions = {
   emailNotificationSubjectExtensionUrl?: string;
+  identifier?: string;
 };
 
 type StringFilterLookup = {
@@ -57,10 +58,18 @@ const IDENTIFIER_SYSTEMS = {
 export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfig> implements BaseNotificationBackend<Config> {
   private attachmentManager?: BaseAttachmentManager;
   private logger?: BaseLogger;
+  private identifier: string;
 
   constructor(private medplum: MedplumClient, private options: MedplumNotificationBackendOptions = {
     emailNotificationSubjectExtensionUrl: 'http://vintasend.com/fhir/StructureDefinition/email-notification-subject',
-  }) {}
+    identifier: 'default-medplum',
+  }) {
+    this.identifier = options.identifier || 'default-medplum';
+  }
+
+  getBackendIdentifier(): string {
+    return this.identifier;
+  }
 
   /**
    * Inject attachment manager (called by VintaSend when both service and backend exist)
@@ -1691,7 +1700,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 }
 
 export class MedplumNotificationBackendFactory<Config extends BaseNotificationTypeConfig> {
-  create(medplum: MedplumClient) {
-    return new MedplumNotificationBackend<Config>(medplum);
+  create(medplum: MedplumClient, options?: MedplumNotificationBackendOptions) {
+    return new MedplumNotificationBackend<Config>(medplum, options);
   }
 }
