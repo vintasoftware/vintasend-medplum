@@ -1,5 +1,6 @@
 import * as pug from 'pug';
 import { BaseEmailTemplateRenderer } from 'vintasend';
+import type { EmailTemplateContent } from 'vintasend/dist/services/notification-template-renderers/base-email-template-renderer';
 import type { JsonObject } from 'vintasend/dist/types/json-values';
 import type { DatabaseNotification } from 'vintasend/dist/types/notification';
 import type { BaseNotificationTypeConfig } from 'vintasend/dist/types/notification-type-config';
@@ -72,6 +73,44 @@ export class PugInlineEmailTemplateRenderer<Config extends BaseNotificationTypeC
     } catch (error) {
       if (this.logger) {
         this.logger.error('[PugInlineEmailTemplateRenderer] Error rendering subject template');
+      }
+      throw error;
+    }
+
+    return { subject, body };
+  }
+
+  async renderFromTemplateContent(
+    notification: DatabaseNotification<Config>,
+    templateContent: EmailTemplateContent,
+    context: JsonObject,
+  ): Promise<{ subject: string; body: string }> {
+    this.logger?.info(
+      `[PugInlineEmailTemplateRenderer] Rendering template from content for notification ${notification.id}`,
+    );
+
+    let body: string;
+    try {
+      const bodyTemplate = pug.compile(templateContent.body);
+      body = bodyTemplate(context);
+    } catch (error) {
+      if (this.logger) {
+        this.logger.error('[PugInlineEmailTemplateRenderer] Error rendering body template content');
+      }
+      throw error;
+    }
+
+    if (!templateContent.subject) {
+      throw new Error('Subject template is required');
+    }
+
+    let subject: string;
+    try {
+      const subjectTemplate = pug.compile(templateContent.subject);
+      subject = subjectTemplate(context);
+    } catch (error) {
+      if (this.logger) {
+        this.logger.error('[PugInlineEmailTemplateRenderer] Error rendering subject template content');
       }
       throw error;
     }

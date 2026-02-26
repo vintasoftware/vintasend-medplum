@@ -44,6 +44,7 @@ describe('PugInlineEmailTemplateRenderer', () => {
       sentAt: null,
       readAt: null,
       sendAfter: new Date(),
+      gitCommitSha: null,
     };
   });
 
