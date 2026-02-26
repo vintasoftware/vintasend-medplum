@@ -122,6 +122,33 @@ describe('MedplumNotificationBackend', () => {
       });
     });
 
+    it('should persist notification with predefined id when provided', async () => {
+      const predefinedId = 'predefined-medplum-notification-id';
+      const input = {
+        id: predefinedId,
+        userId: 'user-123',
+        notificationType: 'EMAIL' as const,
+        bodyTemplate: 'Test Body',
+        contextName: 'testContext' as keyof TestConfig['ContextMap'],
+        contextParameters: { param1: 'value1' },
+        title: 'Test Title',
+        subjectTemplate: 'Test Subject',
+        extraParams: { key: 'value' },
+        sendAfter: null,
+      };
+
+      const createResourceSpy = jest.spyOn(medplumClient, 'createResource');
+      const result = await backend.persistNotification(input);
+
+      expect(createResourceSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resourceType: 'Communication',
+          id: predefinedId,
+        }),
+      );
+      expect(result.id).toBe(predefinedId);
+    });
+
     it('should handle sendAfter date by setting sent extension', async () => {
       const sendAfter = new Date('2026-02-01T00:00:00Z');
       const input = {

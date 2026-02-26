@@ -313,7 +313,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       .filter((n): n is DatabaseNotification<Config> => 'userId' in n);
   }
 
-  async persistNotification(notification: NotificationInput<Config>): Promise<DatabaseNotification<Config>> {
+  async persistNotification(
+    notification: Omit<Notification<Config>, 'id'> & { id?: Config['NotificationIdType'] },
+  ): Promise<DatabaseNotification<Config>> {
     const notificationWithOptionalGitCommitSha = notification as NotificationInput<Config> & {
       gitCommitSha?: string | null;
     };
@@ -353,6 +355,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     const communication: Communication = {
       resourceType: 'Communication',
+      ...(notification.id ? { id: notification.id as string } : {}),
       status: 'in-progress',
       sent: notification.sendAfter?.toISOString(),
       topic: { text: notification.title || undefined },
@@ -714,7 +717,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   /* One-off notification methods */
 
   async persistOneOffNotification(
-    notification: Omit<OneOffNotificationInput<Config>, 'id'>,
+    notification: Omit<OneOffNotificationInput<Config>, 'id'> & {
+      id?: Config['NotificationIdType'];
+    },
   ): Promise<DatabaseOneOffNotification<Config>> {
     const notificationWithOptionalGitCommitSha = notification as Omit<
       OneOffNotificationInput<Config>,
@@ -758,6 +763,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     const communication: Communication = {
       resourceType: 'Communication',
+      ...(notification.id ? { id: notification.id as string } : {}),
       status: 'in-progress',
       sent: notification.sendAfter?.toISOString(),
       topic: { text: notification.title || undefined },
