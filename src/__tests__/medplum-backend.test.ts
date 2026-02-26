@@ -391,7 +391,7 @@ describe('MedplumNotificationBackend', () => {
     });
 
     describe('persistOneOffNotificationUpdate', () => {
-      it('should remove gitCommitSha identifier when update sets it to null', async () => {
+      it('should remove subjectTemplate identifier when update sets it to null', async () => {
         const existing = await medplumClient.createResource(
           createMockCommunication({
             recipient: undefined,
@@ -411,18 +411,18 @@ describe('MedplumNotificationBackend', () => {
             ],
             identifier: [
               {
-                system: 'http://vintasend.com/fhir/git-commit-sha',
-                value: 'c'.repeat(40),
+                system: 'http://vintasend.com/fhir/subject-template',
+                value: 'Test Subject',
               },
             ],
           }),
         );
 
         const updated = await backend.persistOneOffNotificationUpdate(existing.id as string, {
-          gitCommitSha: null,
+          subjectTemplate: null,
         });
 
-        expect(updated.gitCommitSha).toBeNull();
+        expect(updated.subjectTemplate).toBeNull();
       });
     });
 

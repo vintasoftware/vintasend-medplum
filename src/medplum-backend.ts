@@ -19,6 +19,7 @@ import type { InputJsonValue } from 'vintasend/dist/types/json-values';
 import type {
   AnyDatabaseNotification,
   DatabaseNotification,
+  Notification,
   NotificationInput,
 } from 'vintasend/dist/types/notification';
 import type { NotificationStatus } from 'vintasend/dist/types/notification-status';
@@ -374,18 +375,22 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   async persistNotificationUpdate(
     notificationId: Config['NotificationIdType'],
-    notification: Partial<Omit<DatabaseNotification<Config>, 'id'>>,
+    notification: Partial<Omit<Notification<Config>, 'id'>>,
   ): Promise<DatabaseNotification<Config>> {
     const existing = await this.medplum.readResource('Communication', notificationId as string);
+    const status = 'status' in notification ? notification.status : undefined;
+    const subjectTemplate = 'subjectTemplate' in notification ? notification.subjectTemplate : undefined;
 
     // Update identifiers for searchable fields when they change
     const existingIdentifiers = existing.identifier || [];
     const updatedIdentifiers = this.updateIdentifiers(existingIdentifiers, notification);
+    const updatedPayload = this.updatePayloadSubjectTemplate(existing.payload, subjectTemplate);
 
     const updated: Communication = {
       ...existing,
-      ...(notification.status === 'SENT' && { status: 'completed' }),
-      ...(notification.status === 'FAILED' && { status: 'stopped' }),
+      ...(status === 'SENT' && { status: 'completed' }),
+      ...(status === 'FAILED' && { status: 'stopped' }),
+      payload: updatedPayload,
       identifier: updatedIdentifiers,
       meta: {
         ...existing.meta,
@@ -425,6 +430,41 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     upsert(IDENTIFIER_SYSTEMS.gitCommitSha, notification.gitCommitSha as string | null | undefined);
 
     return updated;
+  }
+
+  private updatePayloadSubjectTemplate(
+    existingPayload: Communication['payload'],
+    subjectTemplate: string | null | undefined,
+  ): Communication['payload'] {
+    if (subjectTemplate === undefined || !existingPayload || existingPayload.length === 0) {
+      return existingPayload;
+    }
+
+    const updatedPayload = [...existingPayload];
+    const firstPayload = updatedPayload[0];
+    if (!firstPayload) {
+      return existingPayload;
+    }
+
+    const subjectExtensionUrl = this.options.emailNotificationSubjectExtensionUrl;
+    if (!subjectExtensionUrl) {
+      return existingPayload;
+    }
+    const existingExtensions = (firstPayload.extension || []).filter(
+      (ext) => ext.url !== subjectExtensionUrl,
+    );
+
+    const updatedExtensions =
+      subjectTemplate === null
+        ? existingExtensions
+        : [...existingExtensions, { url: subjectExtensionUrl, valueString: subjectTemplate }];
+
+    updatedPayload[0] = {
+      ...firstPayload,
+      extension: updatedExtensions.length > 0 ? updatedExtensions : undefined,
+    };
+
+    return updatedPayload;
   }
 
   async getAllNotifications(): Promise<AnyDatabaseNotification<Config>[]> {
@@ -558,7 +598,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     if (notification && !('userId' in notification)) {
       throw new Error('Cannot mark one-off notification as read');
     }
-    return this.persistNotificationUpdate(notificationId, { readAt: new Date() });
+    const updatePayload = { readAt: new Date() } as Partial<Omit<Notification<Config>, 'id'>>;
+    return this.persistNotificationUpdate(notificationId, updatePayload);
   }
 
   async cancelNotification(notificationId: Config['NotificationIdType']): Promise<void> {
@@ -742,17 +783,21 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   async persistOneOffNotificationUpdate(
     notificationId: Config['NotificationIdType'],
-    notification: Partial<Omit<DatabaseOneOffNotification<Config>, 'id'>>,
+    notification: Partial<Omit<OneOffNotificationInput<Config>, 'id'>>,
   ): Promise<DatabaseOneOffNotification<Config>> {
     const existing = await this.medplum.readResource('Communication', notificationId as string);
+    const status = 'status' in notification ? notification.status : undefined;
+    const subjectTemplate = 'subjectTemplate' in notification ? notification.subjectTemplate : undefined;
 
     const existingIdentifiers = existing.identifier || [];
     const updatedIdentifiers = this.updateIdentifiers(existingIdentifiers, notification);
+    const updatedPayload = this.updatePayloadSubjectTemplate(existing.payload, subjectTemplate);
 
     const updated: Communication = {
       ...existing,
-      ...(notification.status === 'SENT' && { status: 'completed' }),
-      ...(notification.status === 'FAILED' && { status: 'stopped' }),
+      ...(status === 'SENT' && { status: 'completed' }),
+      ...(status === 'FAILED' && { status: 'stopped' }),
+      payload: updatedPayload,
       identifier: updatedIdentifiers,
       meta: {
         ...existing.meta,

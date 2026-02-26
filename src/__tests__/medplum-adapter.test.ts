@@ -45,6 +45,7 @@ describe('MedplumNotificationAdapter', () => {
       extraParams: {},
       contextUsed: null,
       adapterUsed: null,
+      gitCommitSha: null,
       status: 'PENDING_SEND',
       sentAt: null,
       readAt: null,
