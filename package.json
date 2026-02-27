@@ -1,6 +1,6 @@
 {
   "name": "vintasend-medplum",
-  "version": "0.7.1",
+  "version": "0.8.1",
   "description": "",
   "main": "dist/index.js",
   "scripts": {
@@ -25,7 +25,7 @@
     "@medplum/fhirtypes": "^5.0.10",
     "pdfmake": "^0.2.23",
     "pug": "^3.0.3",
-    "vintasend": "^0.7.1"
+    "vintasend": "^0.8.1"
   },
   "devDependencies": {
     "@medplum/definitions": "^5.0.10",

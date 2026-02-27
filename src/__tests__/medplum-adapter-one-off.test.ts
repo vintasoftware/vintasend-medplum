@@ -30,6 +30,7 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
 
     mockTemplateRenderer = {
       render: jest.fn(),
+      renderFromTemplateContent: jest.fn(),
     } as jest.Mocked<BaseEmailTemplateRenderer<any>>;
 
     mockBackend = {
