@@ -121,6 +121,17 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     };
   }
 
+  private isDuplicateReplicationConflict(error: unknown): boolean {
+    const normalizedError = String(error).toLowerCase();
+
+    return (
+      normalizedError.includes('duplicate') ||
+      normalizedError.includes('unique') ||
+      normalizedError.includes('already exists') ||
+      normalizedError.includes('conflict')
+    );
+  }
+
   private convertNotificationOrderByToFhirSort(orderBy: NotificationOrderBy): string {
     const fieldMap: Record<NotificationOrderBy['field'], string> = {
       sendAfter: 'sent',
@@ -437,6 +448,78 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     const result = await this.medplum.updateResource(updated);
     return this.mapToDatabaseNotification(result) as DatabaseNotification<Config>;
+  }
+
+  async applyReplicationSnapshotIfNewer(
+    snapshot: AnyDatabaseNotification<Config>,
+  ): Promise<{ applied: boolean }> {
+    const existingNotification = await this.getNotification(snapshot.id, false);
+
+    if (
+      existingNotification?.updatedAt &&
+      snapshot.updatedAt &&
+      existingNotification.updatedAt >= snapshot.updatedAt
+    ) {
+      return { applied: false };
+    }
+
+    if ('emailOrPhone' in snapshot) {
+      if (existingNotification) {
+        await this.persistOneOffNotificationUpdate(
+          snapshot.id,
+          snapshot as unknown as Partial<Omit<OneOffNotificationInput<Config>, 'id'>>,
+        );
+
+        return { applied: true };
+      }
+
+      try {
+        await this.persistOneOffNotification(
+          snapshot as unknown as Omit<OneOffNotificationInput<Config>, 'id'> & {
+            id?: Config['NotificationIdType'];
+          },
+        );
+      } catch (createError) {
+        if (!this.isDuplicateReplicationConflict(createError)) {
+          throw createError;
+        }
+
+        await this.persistOneOffNotificationUpdate(
+          snapshot.id,
+          snapshot as unknown as Partial<Omit<OneOffNotificationInput<Config>, 'id'>>,
+        );
+      }
+
+      return { applied: true };
+    }
+
+    if (existingNotification) {
+      await this.persistNotificationUpdate(
+        snapshot.id,
+        snapshot as unknown as Partial<Omit<Notification<Config>, 'id'>>,
+      );
+
+      return { applied: true };
+    }
+
+    try {
+      await this.persistNotification(
+        snapshot as unknown as Omit<Notification<Config>, 'id'> & {
+          id?: Config['NotificationIdType'];
+        },
+      );
+    } catch (createError) {
+      if (!this.isDuplicateReplicationConflict(createError)) {
+        throw createError;
+      }
+
+      await this.persistNotificationUpdate(
+        snapshot.id,
+        snapshot as unknown as Partial<Omit<Notification<Config>, 'id'>>,
+      );
+    }
+
+    return { applied: true };
   }
 
   /**

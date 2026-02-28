@@ -695,6 +695,103 @@ describe('MedplumNotificationBackend', () => {
     });
   });
 
+  describe('applyReplicationSnapshotIfNewer', () => {
+    it('should skip apply when destination notification is newer', async () => {
+      const snapshot = {
+        id: 'notif-1',
+        userId: 'user-123',
+        notificationType: 'EMAIL',
+        title: 'Incoming',
+        bodyTemplate: 'body',
+        contextName: 'testContext',
+        contextParameters: { param1: 'value1' },
+        sendAfter: null,
+        subjectTemplate: 'subject',
+        status: 'SENT',
+        contextUsed: null,
+        extraParams: null,
+        adapterUsed: null,
+        sentAt: null,
+        readAt: null,
+        gitCommitSha: null,
+        createdAt: new Date('2026-02-28T10:00:00.000Z'),
+        updatedAt: new Date('2026-02-28T11:00:00.000Z'),
+      };
+      const destinationNewer = {
+        ...snapshot,
+        updatedAt: new Date('2026-02-28T12:00:00.000Z'),
+      };
+
+      jest.spyOn(backend, 'getNotification').mockResolvedValue(
+        // biome-ignore lint/suspicious/noExplicitAny: test-only cast
+        destinationNewer as any,
+      );
+      const persistNotificationUpdateSpy = jest
+        .spyOn(backend, 'persistNotificationUpdate')
+        .mockResolvedValue(
+          // biome-ignore lint/suspicious/noExplicitAny: test-only cast
+          destinationNewer as any,
+        );
+
+      const result = await backend.applyReplicationSnapshotIfNewer(
+        // biome-ignore lint/suspicious/noExplicitAny: test-only cast
+        snapshot as any,
+      );
+
+      expect(result).toEqual({ applied: false });
+      expect(persistNotificationUpdateSpy).not.toHaveBeenCalled();
+    });
+
+    it('should apply update when destination notification is older', async () => {
+      const snapshot = {
+        id: 'notif-1',
+        userId: 'user-123',
+        notificationType: 'EMAIL',
+        title: 'Incoming title',
+        bodyTemplate: 'body',
+        contextName: 'testContext',
+        contextParameters: { param1: 'value1' },
+        sendAfter: null,
+        subjectTemplate: 'subject',
+        status: 'SENT',
+        contextUsed: null,
+        extraParams: null,
+        adapterUsed: null,
+        sentAt: null,
+        readAt: null,
+        gitCommitSha: null,
+        createdAt: new Date('2026-02-28T10:00:00.000Z'),
+        updatedAt: new Date('2026-02-28T11:00:00.000Z'),
+      };
+      const destinationOlder = {
+        ...snapshot,
+        updatedAt: new Date('2026-02-28T09:00:00.000Z'),
+      };
+
+      jest.spyOn(backend, 'getNotification').mockResolvedValue(
+        // biome-ignore lint/suspicious/noExplicitAny: test-only cast
+        destinationOlder as any,
+      );
+      const persistNotificationUpdateSpy = jest
+        .spyOn(backend, 'persistNotificationUpdate')
+        .mockResolvedValue(
+          // biome-ignore lint/suspicious/noExplicitAny: test-only cast
+          snapshot as any,
+        );
+
+      const result = await backend.applyReplicationSnapshotIfNewer(
+        // biome-ignore lint/suspicious/noExplicitAny: test-only cast
+        snapshot as any,
+      );
+
+      expect(result).toEqual({ applied: true });
+      expect(persistNotificationUpdateSpy).toHaveBeenCalledWith(
+        'notif-1',
+        expect.objectContaining({ title: 'Incoming title' }),
+      );
+    });
+  });
+
   describe('filterNotifications', () => {
     it('should map sendAfterRange to sent date comparators in FHIR search params', async () => {
       const from = new Date('2026-01-01T00:00:00.000Z');
