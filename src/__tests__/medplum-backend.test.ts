@@ -811,6 +811,47 @@ describe('MedplumNotificationBackend', () => {
         'contextName lookup with caseSensitive=false is not supported by MedplumNotificationBackend. Only case-sensitive exact matching is supported.',
       );
     });
+
+    it('should map supported orderBy fields and directions to FHIR _sort', async () => {
+      const searchResourcesSpy = jest
+        .spyOn(medplumClient, 'searchResources')
+        .mockResolvedValue([] as any);
+
+      const testCases = [
+        { orderBy: { field: 'sendAfter', direction: 'asc' } as const, expectedSort: 'sent' },
+        { orderBy: { field: 'sendAfter', direction: 'desc' } as const, expectedSort: '-sent' },
+        { orderBy: { field: 'sentAt', direction: 'asc' } as const, expectedSort: 'sent' },
+        { orderBy: { field: 'sentAt', direction: 'desc' } as const, expectedSort: '-sent' },
+        { orderBy: { field: 'createdAt', direction: 'asc' } as const, expectedSort: '_lastUpdated' },
+        { orderBy: { field: 'createdAt', direction: 'desc' } as const, expectedSort: '-_lastUpdated' },
+        { orderBy: { field: 'updatedAt', direction: 'asc' } as const, expectedSort: '_lastUpdated' },
+        { orderBy: { field: 'updatedAt', direction: 'desc' } as const, expectedSort: '-_lastUpdated' },
+      ];
+
+      for (const testCase of testCases) {
+        searchResourcesSpy.mockClear();
+        await backend.filterNotifications({}, 0, 10, testCase.orderBy);
+
+        expect(searchResourcesSpy).toHaveBeenCalledWith('Communication', [
+          ['_count', '10'],
+          ['_offset', '0'],
+          ['_sort', testCase.expectedSort],
+          ['_tag', 'notification'],
+        ]);
+      }
+    });
+
+    it('should throw for unsupported orderBy.readAt', async () => {
+      const searchResourcesSpy = jest
+        .spyOn(medplumClient, 'searchResources')
+        .mockResolvedValue([] as any);
+
+      await expect(
+        backend.filterNotifications({}, 0, 10, { field: 'readAt', direction: 'asc' }),
+      ).rejects.toThrow("orderBy field 'readAt' is not supported by MedplumNotificationBackend.");
+
+      expect(searchResourcesSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('getFilterCapabilities', () => {
@@ -876,6 +917,19 @@ describe('MedplumNotificationBackend', () => {
       expect(capabilities['stringLookups.endsWith']).toBe(false);
       expect(capabilities['stringLookups.includes']).toBe(false);
       expect(capabilities['stringLookups.caseInsensitive']).toBe(false);
+    });
+
+    it('should mark orderBy.readAt as unsupported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['orderBy.readAt']).toBe(false);
+    });
+
+    it('should mark supported orderBy fields as supported', () => {
+      const capabilities = backend.getFilterCapabilities();
+      expect(capabilities['orderBy.sendAfter']).toBe(true);
+      expect(capabilities['orderBy.sentAt']).toBe(true);
+      expect(capabilities['orderBy.createdAt']).toBe(true);
+      expect(capabilities['orderBy.updatedAt']).toBe(true);
     });
   });
 });

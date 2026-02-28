@@ -6,6 +6,7 @@ import type {
   BaseNotificationBackend,
   NotificationFilter,
   NotificationFilterFields,
+  NotificationOrderBy,
 } from 'vintasend/dist/services/notification-backends/base-notification-backend';
 import { isFieldFilter } from 'vintasend/dist/services/notification-backends/base-notification-backend';
 import type {
@@ -112,7 +113,31 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       'stringLookups.endsWith': false,
       'stringLookups.includes': false,
       'stringLookups.caseInsensitive': false,
+      'orderBy.sendAfter': true,
+      'orderBy.sentAt': true,
+      'orderBy.readAt': false,
+      'orderBy.createdAt': true,
+      'orderBy.updatedAt': true,
     };
+  }
+
+  private convertNotificationOrderByToFhirSort(orderBy: NotificationOrderBy): string {
+    const fieldMap: Record<NotificationOrderBy['field'], string> = {
+      sendAfter: 'sent',
+      sentAt: 'sent',
+      createdAt: '_lastUpdated',
+      updatedAt: '_lastUpdated',
+      readAt: '',
+    };
+
+    if (orderBy.field === 'readAt') {
+      throw new Error(
+        "orderBy field 'readAt' is not supported by MedplumNotificationBackend.",
+      );
+    }
+
+    const mappedField = fieldMap[orderBy.field];
+    return orderBy.direction === 'desc' ? `-${mappedField}` : mappedField;
   }
 
   private resolveStringFieldForFhir(fieldName: string, value: StringFieldFilter): string {
@@ -885,6 +910,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     filter: NotificationFilter<Config>,
     page: number,
     pageSize: number,
+    orderBy?: NotificationOrderBy,
   ): Promise<AnyDatabaseNotification<Config>[]> {
     if ('or' in filter) {
       throw new Error(
@@ -895,6 +921,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     const searchParams = this.buildFhirSearchParams(filter);
     searchParams._count = pageSize.toString();
     searchParams._offset = (page * pageSize).toString();
+    if (orderBy) {
+      searchParams._sort = this.convertNotificationOrderByToFhirSort(orderBy);
+    }
 
     // Convert to string[][] so that _tag values become repeated AND parameters
     // (comma-separated _tag in a single param means OR in FHIR, which is wrong here)
