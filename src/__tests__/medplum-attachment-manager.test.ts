@@ -8,10 +8,10 @@ type BinaryWithId = Binary & { id: string };
 /**
  * Tests for MedplumAttachmentManager.
  *
- * NOTE: MockClient from @medplum/mock runs operations in-memory and is NOT a Jest mock.
- * To verify method calls, use jest.spyOn() instead of treating it as a mock:
+ * NOTE: MockClient from @medplum/mock runs operations in-memory and is NOT a framework mock.
+ * To verify method calls, use vi.spyOn() instead of treating it as a mock:
  *
- * ✅ Correct: const spy = jest.spyOn(medplumClient, 'createResource').mockResolvedValue({})
+ * ✅ Correct: const spy = vi.spyOn(medplumClient, 'createResource').mockResolvedValue({})
  * ❌ Wrong:   medplumClient.createResource.mockResolvedValue({})
  *
  * The test.setup.ts file configures the MockClient with proper FHIR search parameters
@@ -22,7 +22,7 @@ describe('MedplumAttachmentManager', () => {
   let manager: MedplumAttachmentManager;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     medplumClient = new MockClient();
 
@@ -65,7 +65,7 @@ describe('MedplumAttachmentManager', () => {
         createdDateTime: expect.any(String),
       };
 
-      const createResourceSpy = jest.spyOn(medplumClient, 'createResource')
+      const createResourceSpy = vi.spyOn(medplumClient, 'createResource')
         .mockResolvedValueOnce(mockBinary as any)
         .mockResolvedValueOnce(mockMedia as any);
 
@@ -137,7 +137,7 @@ describe('MedplumAttachmentManager', () => {
         createdDateTime: new Date().toISOString(),
       };
 
-      jest.spyOn(medplumClient, 'createResource')
+      vi.spyOn(medplumClient, 'createResource')
         .mockResolvedValueOnce(mockBinary as any)
         .mockResolvedValueOnce(mockMedia as any);
 
@@ -179,7 +179,7 @@ describe('MedplumAttachmentManager', () => {
           createdDateTime: new Date().toISOString(),
         };
 
-        jest.spyOn(medplumClient, 'createResource')
+        vi.spyOn(medplumClient, 'createResource')
           .mockResolvedValueOnce(mockBinary as any)
           .mockResolvedValueOnce(mockMedia as any);
 
@@ -220,7 +220,7 @@ describe('MedplumAttachmentManager', () => {
         createdDateTime: new Date().toISOString(),
       };
 
-      jest.spyOn(medplumClient, 'createResource')
+      vi.spyOn(medplumClient, 'createResource')
         .mockResolvedValueOnce(mockBinary as any)
         .mockResolvedValueOnce(mockMedia as any);
 
@@ -259,7 +259,7 @@ describe('MedplumAttachmentManager', () => {
         createdDateTime: '2026-01-15T00:00:00Z',
       };
 
-      const readResourceSpy = jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
+      const readResourceSpy = vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
 
       const result = await manager.getFile('media-123');
 
@@ -274,7 +274,7 @@ describe('MedplumAttachmentManager', () => {
     });
 
     it('should return null if Media resource not found', async () => {
-      jest.spyOn(medplumClient, 'readResource').mockRejectedValue(new Error('Not found'));
+      vi.spyOn(medplumClient, 'readResource').mockRejectedValue(new Error('Not found'));
 
       const result = await manager.getFile('nonexistent');
 
@@ -298,7 +298,7 @@ describe('MedplumAttachmentManager', () => {
         // No identifiers - simulating a Media resource created outside uploadFile
       };
 
-      jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
+      vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
 
       const result = await manager.getFile('media-123');
 
@@ -329,8 +329,8 @@ describe('MedplumAttachmentManager', () => {
         },
       };
 
-      const readResourceSpy = jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
-      const deleteResourceSpy = jest.spyOn(medplumClient, 'deleteResource').mockResolvedValue({} as any);
+      const readResourceSpy = vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
+      const deleteResourceSpy = vi.spyOn(medplumClient, 'deleteResource').mockResolvedValue({} as any);
 
       await manager.deleteFile('media-123');
 
@@ -340,8 +340,8 @@ describe('MedplumAttachmentManager', () => {
     });
 
     it('should handle deletion when Media resource not found', async () => {
-      jest.spyOn(medplumClient, 'readResource').mockRejectedValue(new Error('Not found'));
-      const deleteResourceSpy = jest.spyOn(medplumClient, 'deleteResource');
+      vi.spyOn(medplumClient, 'readResource').mockRejectedValue(new Error('Not found'));
+      const deleteResourceSpy = vi.spyOn(medplumClient, 'deleteResource');
 
       await expect(manager.deleteFile('nonexistent')).rejects.toThrow('Not found');
 
@@ -360,8 +360,8 @@ describe('MedplumAttachmentManager', () => {
         },
       };
 
-      jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
-      const deleteResourceSpy = jest.spyOn(medplumClient, 'deleteResource').mockResolvedValue({} as any);
+      vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
+      const deleteResourceSpy = vi.spyOn(medplumClient, 'deleteResource').mockResolvedValue({} as any);
 
       await manager.deleteFile('media-123');
 
@@ -443,7 +443,7 @@ describe('MedplumAttachmentManager', () => {
           data: Buffer.from('test content').toString('base64'),
         };
 
-        const readResourceSpy = jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+        const readResourceSpy = vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
 
         const result = await attachmentFile.read();
 
@@ -460,7 +460,7 @@ describe('MedplumAttachmentManager', () => {
           url: 'https://storage.example.com/binary-123',
         };
 
-        jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+        vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
 
         const testContent = 'downloaded content';
         const testBuffer = Buffer.from(testContent);
@@ -470,9 +470,9 @@ describe('MedplumAttachmentManager', () => {
           testBuffer.byteOffset + testBuffer.byteLength
         );
 
-        global.fetch = jest.fn().mockResolvedValue({
+        global.fetch = vi.fn().mockResolvedValue({
           ok: true,
-          arrayBuffer: jest.fn().mockResolvedValue(mockArrayBuffer),
+          arrayBuffer: vi.fn().mockResolvedValue(mockArrayBuffer),
         });
 
         const result = await attachmentFile.read();
@@ -490,9 +490,9 @@ describe('MedplumAttachmentManager', () => {
           url: 'https://storage.example.com/binary-123',
         };
 
-        jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+        vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
 
-        global.fetch = jest.fn().mockResolvedValue({
+        global.fetch = vi.fn().mockResolvedValue({
           ok: false,
           statusText: 'Not Found',
         });
@@ -507,7 +507,7 @@ describe('MedplumAttachmentManager', () => {
           contentType: 'text/plain',
         };
 
-        jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+        vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
 
         await expect(attachmentFile.read()).rejects.toThrow('Binary resource has neither data nor url');
       });
@@ -522,7 +522,7 @@ describe('MedplumAttachmentManager', () => {
           data: Buffer.from('test content').toString('base64'),
         };
 
-        jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+        vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
 
         const result = await attachmentFile.stream();
 
@@ -539,7 +539,7 @@ describe('MedplumAttachmentManager', () => {
           url: 'https://storage.example.com/binary-123?signature=abc',
         };
 
-        jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+        vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
 
         const url = await attachmentFile.url();
 
@@ -553,7 +553,7 @@ describe('MedplumAttachmentManager', () => {
           contentType: 'text/plain',
         };
 
-        jest.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+        vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
 
         await expect(attachmentFile.url()).rejects.toThrow('Binary resource binary-123 does not have a presigned URL');
       });
@@ -561,7 +561,7 @@ describe('MedplumAttachmentManager', () => {
 
     describe('delete', () => {
       it('should delete Binary resource', async () => {
-        const deleteResourceSpy = jest.spyOn(medplumClient, 'deleteResource').mockResolvedValue({} as any);
+        const deleteResourceSpy = vi.spyOn(medplumClient, 'deleteResource').mockResolvedValue({} as any);
 
         await attachmentFile.delete();
 

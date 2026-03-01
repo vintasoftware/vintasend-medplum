@@ -98,14 +98,14 @@ describe('MedplumNotificationBackend - Attachments', () => {
     medplumClient = new MockClient();
 
     mockAttachmentManager = {
-      reconstructAttachmentFile: jest.fn(),
-      uploadFile: jest.fn(),
-      deleteFile: jest.fn(),
-      deleteFileByIdentifiers: jest.fn(),
-      detectContentType: jest.fn(),
-      calculateChecksum: jest.fn(),
-      fileToBuffer: jest.fn(),
-      getFile: jest.fn(),
+      reconstructAttachmentFile: vi.fn(),
+      uploadFile: vi.fn(),
+      deleteFile: vi.fn(),
+      deleteFileByIdentifiers: vi.fn(),
+      detectContentType: vi.fn(),
+      calculateChecksum: vi.fn(),
+      fileToBuffer: vi.fn(),
+      getFile: vi.fn(),
     } as any;
 
     backend = new MedplumNotificationBackend(medplumClient, {
@@ -219,10 +219,10 @@ describe('MedplumNotificationBackend - Attachments', () => {
   describe('getAttachments', () => {
     it('should retrieve all attachments for a notification in a single batch query', async () => {
       const mockAttachmentFileInterface: AttachmentFile = {
-        read: jest.fn().mockResolvedValue(Buffer.from('test')),
-        stream: jest.fn().mockResolvedValue(new ReadableStream()),
-        url: jest.fn().mockResolvedValue('https://example.com/file'),
-        delete: jest.fn().mockResolvedValue(undefined),
+        read: vi.fn().mockResolvedValue(Buffer.from('test')),
+        stream: vi.fn().mockResolvedValue(new ReadableStream()),
+        url: vi.fn().mockResolvedValue('https://example.com/file'),
+        delete: vi.fn().mockResolvedValue(undefined),
       };
 
       const createdMedia1 = await medplumClient.createResource({

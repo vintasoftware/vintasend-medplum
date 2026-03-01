@@ -17,20 +17,20 @@ interface TestConfig extends BaseNotificationTypeConfig {
 
 describe('MedplumNotificationBackend', () => {
   let medplumClient: MockClient;
-  let mockAttachmentManager: jest.Mocked<BaseAttachmentManager>;
+  let mockAttachmentManager: vi.Mocked<BaseAttachmentManager>;
   let backend: MedplumNotificationBackend<TestConfig>;
 
   beforeEach(() => {
     medplumClient = new MockClient();
 
     mockAttachmentManager = {
-      reconstructAttachmentFile: jest.fn(),
-      uploadFile: jest.fn(),
-      deleteFile: jest.fn(),
-      detectContentType: jest.fn(),
-      calculateChecksum: jest.fn(),
-      fileToBuffer: jest.fn(),
-    } as unknown as jest.Mocked<BaseAttachmentManager>;
+      reconstructAttachmentFile: vi.fn(),
+      uploadFile: vi.fn(),
+      deleteFile: vi.fn(),
+      detectContentType: vi.fn(),
+      calculateChecksum: vi.fn(),
+      fileToBuffer: vi.fn(),
+    } as unknown as vi.Mocked<BaseAttachmentManager>;
 
     backend = new MedplumNotificationBackend(
       medplumClient,
@@ -137,7 +137,7 @@ describe('MedplumNotificationBackend', () => {
         sendAfter: null,
       };
 
-      const createResourceSpy = jest.spyOn(medplumClient, 'createResource');
+      const createResourceSpy = vi.spyOn(medplumClient, 'createResource');
       const result = await backend.persistNotification(input);
 
       expect(createResourceSpy).toHaveBeenCalledWith(
@@ -183,7 +183,7 @@ describe('MedplumNotificationBackend', () => {
         gitCommitSha,
       };
 
-      const createResourceSpy = jest.spyOn(medplumClient, 'createResource');
+      const createResourceSpy = vi.spyOn(medplumClient, 'createResource');
       // biome-ignore lint/suspicious/noExplicitAny: testing persisted-field passthrough in backend layer
       const result = await backend.persistNotification(input as any);
 
@@ -399,7 +399,7 @@ describe('MedplumNotificationBackend', () => {
           gitCommitSha,
         };
 
-        const createResourceSpy = jest.spyOn(medplumClient, 'createResource');
+        const createResourceSpy = vi.spyOn(medplumClient, 'createResource');
         // biome-ignore lint/suspicious/noExplicitAny: testing persisted-field passthrough in backend layer
         const result = await backend.persistOneOffNotification(input as any);
 
@@ -722,11 +722,11 @@ describe('MedplumNotificationBackend', () => {
         updatedAt: new Date('2026-02-28T12:00:00.000Z'),
       };
 
-      jest.spyOn(backend, 'getNotification').mockResolvedValue(
+      vi.spyOn(backend, 'getNotification').mockResolvedValue(
         // biome-ignore lint/suspicious/noExplicitAny: test-only cast
         destinationNewer as any,
       );
-      const persistNotificationUpdateSpy = jest
+      const persistNotificationUpdateSpy = vi
         .spyOn(backend, 'persistNotificationUpdate')
         .mockResolvedValue(
           // biome-ignore lint/suspicious/noExplicitAny: test-only cast
@@ -768,11 +768,11 @@ describe('MedplumNotificationBackend', () => {
         updatedAt: new Date('2026-02-28T09:00:00.000Z'),
       };
 
-      jest.spyOn(backend, 'getNotification').mockResolvedValue(
+      vi.spyOn(backend, 'getNotification').mockResolvedValue(
         // biome-ignore lint/suspicious/noExplicitAny: test-only cast
         destinationOlder as any,
       );
-      const persistNotificationUpdateSpy = jest
+      const persistNotificationUpdateSpy = vi
         .spyOn(backend, 'persistNotificationUpdate')
         .mockResolvedValue(
           // biome-ignore lint/suspicious/noExplicitAny: test-only cast
@@ -797,7 +797,7 @@ describe('MedplumNotificationBackend', () => {
       const from = new Date('2026-01-01T00:00:00.000Z');
       const to = new Date('2026-01-31T23:59:59.999Z');
 
-      const searchResourcesSpy = jest
+      const searchResourcesSpy = vi
         .spyOn(medplumClient, 'searchResources')
         .mockResolvedValue([] as any);
 
@@ -835,7 +835,7 @@ describe('MedplumNotificationBackend', () => {
     });
 
     it('should support exact lookup object for contextName', async () => {
-      const searchResourcesSpy = jest
+      const searchResourcesSpy = vi
         .spyOn(medplumClient, 'searchResources')
         .mockResolvedValue([] as any);
 
@@ -910,7 +910,7 @@ describe('MedplumNotificationBackend', () => {
     });
 
     it('should map supported orderBy fields and directions to FHIR _sort', async () => {
-      const searchResourcesSpy = jest
+      const searchResourcesSpy = vi
         .spyOn(medplumClient, 'searchResources')
         .mockResolvedValue([] as any);
 
@@ -939,7 +939,7 @@ describe('MedplumNotificationBackend', () => {
     });
 
     it('should throw for unsupported orderBy.readAt', async () => {
-      const searchResourcesSpy = jest
+      const searchResourcesSpy = vi
         .spyOn(medplumClient, 'searchResources')
         .mockResolvedValue([] as any);
 

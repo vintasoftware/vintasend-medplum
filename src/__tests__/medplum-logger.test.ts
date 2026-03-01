@@ -2,15 +2,15 @@ import { MedplumLogger } from '../medplum-logger';
 
 describe('MedplumLogger', () => {
   let logger: MedplumLogger;
-  let consoleLogSpy: jest.SpyInstance;
-  let consoleErrorSpy: jest.SpyInstance;
-  let consoleWarnSpy: jest.SpyInstance;
+  let consoleLogSpy: vi.SpyInstance;
+  let consoleErrorSpy: vi.SpyInstance;
+  let consoleWarnSpy: vi.SpyInstance;
 
   beforeEach(() => {
     logger = new MedplumLogger();
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
-    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation();
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation();
+    consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation();
   });
 
   afterEach(() => {

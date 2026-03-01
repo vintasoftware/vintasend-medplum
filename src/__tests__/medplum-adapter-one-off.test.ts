@@ -7,10 +7,10 @@ import { MedplumNotificationAdapter } from '../medplum-adapter';
 /**
  * Tests for MedplumNotificationAdapter one-off notifications support.
  *
- * NOTE: MockClient from @medplum/mock runs operations in-memory and is NOT a Jest mock.
- * To verify method calls, use jest.spyOn() instead of treating it as a mock:
+ * NOTE: MockClient from @medplum/mock runs operations in-memory and is NOT a framework mock.
+ * To verify method calls, use vi.spyOn() instead of treating it as a mock:
  *
- * ✅ Correct: const spy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({})
+ * ✅ Correct: const spy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({})
  * ❌ Wrong:   medplumClient.sendEmail.mockResolvedValue({})
  *
  * The test.setup.ts file configures the MockClient with proper FHIR search parameters
@@ -18,8 +18,8 @@ import { MedplumNotificationAdapter } from '../medplum-adapter';
  */
 describe('MedplumNotificationAdapter - One-Off Notifications', () => {
   let medplumClient: MockClient;
-  let mockTemplateRenderer: jest.Mocked<BaseEmailTemplateRenderer<any>>;
-  let mockBackend: jest.Mocked<MedplumNotificationBackend<any>>;
+  let mockTemplateRenderer: vi.Mocked<BaseEmailTemplateRenderer<any>>;
+  let mockBackend: vi.Mocked<MedplumNotificationBackend<any>>;
   let adapter: MedplumNotificationAdapter<typeof mockTemplateRenderer, any>;
 
   let mockOneOffNotification: DatabaseOneOffNotification<any>;
@@ -29,13 +29,13 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
     medplumClient = new MockClient();
 
     mockTemplateRenderer = {
-      render: jest.fn(),
-      renderFromTemplateContent: jest.fn(),
-    } as jest.Mocked<BaseEmailTemplateRenderer<any>>;
+      render: vi.fn(),
+      renderFromTemplateContent: vi.fn(),
+    } as vi.Mocked<BaseEmailTemplateRenderer<any>>;
 
     mockBackend = {
-      getUserEmailFromNotification: jest.fn(),
-    } as unknown as jest.Mocked<MedplumNotificationBackend<any>>;
+      getUserEmailFromNotification: vi.fn(),
+    } as unknown as vi.Mocked<MedplumNotificationBackend<any>>;
 
     adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
@@ -88,7 +88,7 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
         body: '<p>Test Body</p>',
       });
 
-      const sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
+      const sendEmailSpy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
 
       await adapter.send(mockOneOffNotification, {});
 
@@ -107,7 +107,7 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
         body: '<p>Hello John Doe</p>',
       });
 
-      const sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
+      const sendEmailSpy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
 
       const context = {
         firstName: 'John',
@@ -132,7 +132,7 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
       });
 
       const error = new Error('Email sending failed');
-      jest.spyOn(medplumClient, 'sendEmail').mockRejectedValue(error);
+      vi.spyOn(medplumClient, 'sendEmail').mockRejectedValue(error);
 
       await expect(adapter.send(mockOneOffNotification, {})).rejects.toThrow(
         'Email sending failed',
@@ -159,7 +159,7 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
       });
 
       mockBackend.getUserEmailFromNotification.mockResolvedValue('user@example.com');
-      const sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
+      const sendEmailSpy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
 
       await adapter.send(mockRegularNotification, {});
 
@@ -193,7 +193,7 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
         body: '<p>Test Body</p>',
       });
 
-      let sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
+      let sendEmailSpy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
 
       // Send one-off notification
       await adapter.send(mockOneOffNotification, {});
@@ -203,14 +203,14 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
         text: '<p>Test Body</p>',
       });
 
-      jest.clearAllMocks();
+      vi.clearAllMocks();
       mockTemplateRenderer.render.mockResolvedValue({
         subject: 'Test Subject 2',
         body: '<p>Test Body 2</p>',
       });
 
       mockBackend.getUserEmailFromNotification.mockResolvedValue('user@example.com');
-      sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
+      sendEmailSpy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
 
       // Send regular notification
       await adapter.send(mockRegularNotification, {});
@@ -244,7 +244,7 @@ describe('MedplumNotificationAdapter - One-Off Notifications', () => {
     it('should handle template rendering errors for one-off notifications', async () => {
       const error = new Error('Template not found');
       mockTemplateRenderer.render.mockRejectedValue(error);
-      const sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail');
+      const sendEmailSpy = vi.spyOn(medplumClient, 'sendEmail');
 
       await expect(adapter.send(mockOneOffNotification, {})).rejects.toThrow('Template not found');
       expect(sendEmailSpy).not.toHaveBeenCalled();

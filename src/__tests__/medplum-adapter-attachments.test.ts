@@ -8,10 +8,10 @@ import { MedplumNotificationAdapter } from '../medplum-adapter';
 /**
  * Tests for MedplumNotificationAdapter attachments support.
  *
- * NOTE: MockClient from @medplum/mock runs operations in-memory and is NOT a Jest mock.
- * To verify method calls, use jest.spyOn() instead of treating it as a mock:
+ * NOTE: MockClient from @medplum/mock runs operations in-memory and is NOT a framework mock.
+ * To verify method calls, use vi.spyOn() instead of treating it as a mock:
  *
- * ✅ Correct: const spy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({})
+ * ✅ Correct: const spy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({})
  * ❌ Wrong:   medplumClient.sendEmail.mockResolvedValue({})
  *
  * The test.setup.ts file configures the MockClient with proper FHIR search parameters
@@ -19,8 +19,8 @@ import { MedplumNotificationAdapter } from '../medplum-adapter';
  */
 describe('MedplumNotificationAdapter - Attachments', () => {
   let medplumClient: MockClient;
-  let mockTemplateRenderer: jest.Mocked<BaseEmailTemplateRenderer<any>>;
-  let mockBackend: jest.Mocked<MedplumNotificationBackend<any>>;
+  let mockTemplateRenderer: vi.Mocked<BaseEmailTemplateRenderer<any>>;
+  let mockBackend: vi.Mocked<MedplumNotificationBackend<any>>;
   let adapter: MedplumNotificationAdapter<typeof mockTemplateRenderer, any>;
   let mockNotification: DatabaseNotification<any>;
 
@@ -28,13 +28,13 @@ describe('MedplumNotificationAdapter - Attachments', () => {
     medplumClient = new MockClient();
 
     mockTemplateRenderer = {
-      render: jest.fn(),
-      renderFromTemplateContent: jest.fn(),
-    } as jest.Mocked<BaseEmailTemplateRenderer<any>>;
+      render: vi.fn(),
+      renderFromTemplateContent: vi.fn(),
+    } as vi.Mocked<BaseEmailTemplateRenderer<any>>;
 
     mockBackend = {
-      getUserEmailFromNotification: jest.fn(),
-    } as unknown as jest.Mocked<MedplumNotificationBackend<any>>;
+      getUserEmailFromNotification: vi.fn(),
+    } as unknown as vi.Mocked<MedplumNotificationBackend<any>>;
 
     adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
@@ -66,10 +66,10 @@ describe('MedplumNotificationAdapter - Attachments', () => {
   it('should send email with single attachment', async () => {
     const fileBuffer = Buffer.from('test file content');
     const mockFile: AttachmentFile = {
-      read: jest.fn().mockResolvedValue(fileBuffer),
-      stream: jest.fn(),
-      url: jest.fn(),
-      delete: jest.fn(),
+      read: vi.fn().mockResolvedValue(fileBuffer),
+      stream: vi.fn(),
+      url: vi.fn(),
+      delete: vi.fn(),
     };
 
     const attachment: StoredAttachment = {
@@ -101,7 +101,7 @@ describe('MedplumNotificationAdapter - Attachments', () => {
     mockBackend.getUserEmailFromNotification.mockResolvedValue(userEmail);
 
     // Spy on sendEmail method
-    const sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
+    const sendEmailSpy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
 
     await adapter.send(notificationWithAttachments, context);
 
@@ -125,17 +125,17 @@ describe('MedplumNotificationAdapter - Attachments', () => {
     const fileBuffer2 = Buffer.from('file 2 content');
 
     const mockFile1: AttachmentFile = {
-      read: jest.fn().mockResolvedValue(fileBuffer1),
-      stream: jest.fn(),
-      url: jest.fn(),
-      delete: jest.fn(),
+      read: vi.fn().mockResolvedValue(fileBuffer1),
+      stream: vi.fn(),
+      url: vi.fn(),
+      delete: vi.fn(),
     };
 
     const mockFile2: AttachmentFile = {
-      read: jest.fn().mockResolvedValue(fileBuffer2),
-      stream: jest.fn(),
-      url: jest.fn(),
-      delete: jest.fn(),
+      read: vi.fn().mockResolvedValue(fileBuffer2),
+      stream: vi.fn(),
+      url: vi.fn(),
+      delete: vi.fn(),
     };
 
     const attachment1: StoredAttachment = {
@@ -180,7 +180,7 @@ describe('MedplumNotificationAdapter - Attachments', () => {
     mockBackend.getUserEmailFromNotification.mockResolvedValue(userEmail);
 
     // Spy on sendEmail method
-    const sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
+    const sendEmailSpy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
 
     await adapter.send(notificationWithAttachments, context);
 
@@ -222,7 +222,7 @@ describe('MedplumNotificationAdapter - Attachments', () => {
     mockBackend.getUserEmailFromNotification.mockResolvedValue(userEmail);
 
     // Spy on sendEmail method
-    const sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
+    const sendEmailSpy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
 
     await adapter.send(notificationWithoutAttachments, context);
 
@@ -245,7 +245,7 @@ describe('MedplumNotificationAdapter - Attachments', () => {
     mockBackend.getUserEmailFromNotification.mockResolvedValue(userEmail);
 
     // Spy on sendEmail method
-    const sendEmailSpy = jest.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
+    const sendEmailSpy = vi.spyOn(medplumClient, 'sendEmail').mockResolvedValue({} as any);
 
     await adapter.send(mockNotification, context);
 
@@ -258,10 +258,10 @@ describe('MedplumNotificationAdapter - Attachments', () => {
 
   it('should handle attachment read errors gracefully', async () => {
     const mockFile: AttachmentFile = {
-      read: jest.fn().mockRejectedValue(new Error('Failed to read file')),
-      stream: jest.fn(),
-      url: jest.fn(),
-      delete: jest.fn(),
+      read: vi.fn().mockRejectedValue(new Error('Failed to read file')),
+      stream: vi.fn(),
+      url: vi.fn(),
+      delete: vi.fn(),
     };
 
     const attachment: StoredAttachment = {

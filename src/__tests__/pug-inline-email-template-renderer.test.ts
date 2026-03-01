@@ -173,9 +173,9 @@ describe('PugInlineEmailTemplateRenderer', () => {
 
   it('should support logger injection', () => {
     const mockLogger: BaseLogger = {
-      info: jest.fn(),
-      error: jest.fn(),
-      warn: jest.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+      warn: vi.fn(),
     };
 
     renderer.injectLogger(mockLogger);
@@ -186,9 +186,9 @@ describe('PugInlineEmailTemplateRenderer', () => {
 
   it('should use logger when rendering fails', async () => {
     const mockLogger: BaseLogger = {
-      info: jest.fn(),
-      error: jest.fn(),
-      warn: jest.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+      warn: vi.fn(),
     };
 
     renderer.injectLogger(mockLogger);
