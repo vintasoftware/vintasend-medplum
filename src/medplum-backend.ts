@@ -1,34 +1,28 @@
-import { MedplumClient } from '@medplum/core';
-import { Attachment, Communication, Media } from '@medplum/fhirtypes';
-import type { BaseAttachmentManager } from 'vintasend/dist/services/attachment-manager/base-attachment-manager';
-import type { BaseLogger } from 'vintasend/dist/services/loggers/base-logger';
-import type {
-  BaseNotificationBackend,
-  NotificationFilter,
-  NotificationFilterFields,
-  NotificationOrderBy,
-} from 'vintasend/dist/services/notification-backends/base-notification-backend';
-import { isFieldFilter } from 'vintasend/dist/services/notification-backends/base-notification-backend';
-import type {
-  AttachmentFile,
-  AttachmentFileRecord,
-  FileAttachment,
-  NotificationAttachment,
-  StoredAttachment,
-} from 'vintasend/dist/types/attachment';
-import type { InputJsonValue } from 'vintasend/dist/types/json-values';
+import type { MedplumClient } from '@medplum/core';
+import type { Attachment, Communication, Media } from '@medplum/fhirtypes';
 import type {
   AnyDatabaseNotification,
+  AttachmentFile,
+  AttachmentFileRecord,
+  BaseAttachmentManager,
+  BaseLogger,
+  BaseNotificationBackend,
+  BaseNotificationTypeConfig,
   DatabaseNotification,
-  Notification,
-  NotificationInput,
-} from 'vintasend/dist/types/notification';
-import type { NotificationStatus } from 'vintasend/dist/types/notification-status';
-import type { BaseNotificationTypeConfig } from 'vintasend/dist/types/notification-type-config';
-import type {
   DatabaseOneOffNotification,
+  FileAttachment,
+  InputJsonValue,
+  Notification,
+  NotificationAttachment,
+  NotificationFilter,
+  NotificationFilterFields,
+  NotificationInput,
+  NotificationOrderBy,
+  NotificationStatus,
   OneOffNotificationInput,
-} from 'vintasend/dist/types/one-off-notification';
+  StoredAttachment,
+} from 'vintasend';
+import { isFieldFilter } from 'vintasend';
 import type { MedplumStorageIdentifiers } from './types';
 
 type MedplumNotificationBackendOptions = {
@@ -56,15 +50,21 @@ const IDENTIFIER_SYSTEMS = {
   gitCommitSha: 'http://vintasend.com/fhir/git-commit-sha',
 } as const;
 
-export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfig> implements BaseNotificationBackend<Config> {
+export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfig>
+  implements BaseNotificationBackend<Config>
+{
   private attachmentManager?: BaseAttachmentManager;
   private logger?: BaseLogger;
   private identifier: string;
 
-  constructor(private medplum: MedplumClient, private options: MedplumNotificationBackendOptions = {
-    emailNotificationSubjectExtensionUrl: 'http://vintasend.com/fhir/StructureDefinition/email-notification-subject',
-    identifier: 'default-medplum',
-  }) {
+  constructor(
+    private medplum: MedplumClient,
+    private options: MedplumNotificationBackendOptions = {
+      emailNotificationSubjectExtensionUrl:
+        'http://vintasend.com/fhir/StructureDefinition/email-notification-subject',
+      identifier: 'default-medplum',
+    },
+  ) {
     this.identifier = options.identifier || 'default-medplum';
   }
 
@@ -142,9 +142,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     };
 
     if (orderBy.field === 'readAt') {
-      throw new Error(
-        "orderBy field 'readAt' is not supported by MedplumNotificationBackend.",
-      );
+      throw new Error("orderBy field 'readAt' is not supported by MedplumNotificationBackend.");
     }
 
     const mappedField = fieldMap[orderBy.field];
@@ -159,14 +157,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     if (value.lookup !== 'exact') {
       throw new Error(
         `${fieldName} lookup '${value.lookup}' is not supported by MedplumNotificationBackend. ` +
-        "Only exact string matching is supported.",
+          'Only exact string matching is supported.',
       );
     }
 
     if (value.caseSensitive === false) {
       throw new Error(
         `${fieldName} lookup with caseSensitive=false is not supported by MedplumNotificationBackend. ` +
-        'Only case-sensitive exact matching is supported.',
+          'Only case-sensitive exact matching is supported.',
       );
     }
 
@@ -189,19 +187,19 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Extract subjectTemplate from payload extension
     const subjectTemplateExtension = communication.payload?.[0]?.extension?.find(
-      (ext) => ext.url === this.options.emailNotificationSubjectExtensionUrl
+      (ext) => ext.url === this.options.emailNotificationSubjectExtensionUrl,
     );
     const subjectTemplate = subjectTemplateExtension?.valueString || null;
 
     // Extract one-off notification fields from extensions
     const emailOrPhoneExtension = communication.extension?.find(
-      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/emailOrPhone'
+      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/emailOrPhone',
     );
     const firstNameExtension = communication.extension?.find(
-      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/firstName'
+      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/firstName',
     );
     const lastNameExtension = communication.extension?.find(
-      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/lastName'
+      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/lastName',
     );
 
     const emailOrPhone = emailOrPhoneExtension?.valueString;
@@ -210,33 +208,37 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Extract contextUsed from extension
     const contextUsedExtension = communication.extension?.find(
-      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/contextUsed'
+      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/contextUsed',
     );
     const contextUsed = contextUsedExtension?.valueString
       ? JSON.parse(contextUsedExtension.valueString)
       : null;
 
     // Extract searchable fields from identifiers
-    const bodyTemplate = communication.identifier?.find(
-      (id) => id.system === IDENTIFIER_SYSTEMS.bodyTemplate
-    )?.value || communication.payload?.[0]?.contentString || '';
+    const bodyTemplate =
+      communication.identifier?.find((id) => id.system === IDENTIFIER_SYSTEMS.bodyTemplate)
+        ?.value ||
+      communication.payload?.[0]?.contentString ||
+      '';
 
-    const subjectTemplateFromId = communication.identifier?.find(
-      (id) => id.system === IDENTIFIER_SYSTEMS.subjectTemplate
-    )?.value || subjectTemplate;
+    const subjectTemplateFromId =
+      communication.identifier?.find((id) => id.system === IDENTIFIER_SYSTEMS.subjectTemplate)
+        ?.value || subjectTemplate;
 
-    const adapterUsed = communication.identifier?.find(
-      (id) => id.system === IDENTIFIER_SYSTEMS.adapterUsed
-    )?.value || null;
+    const adapterUsed =
+      communication.identifier?.find((id) => id.system === IDENTIFIER_SYSTEMS.adapterUsed)?.value ||
+      null;
 
-    const gitCommitSha = communication.identifier?.find(
-      (id) => id.system === IDENTIFIER_SYSTEMS.gitCommitSha
-    )?.value || null;
+    const gitCommitSha =
+      communication.identifier?.find((id) => id.system === IDENTIFIER_SYSTEMS.gitCommitSha)
+        ?.value || null;
 
     const baseNotification = {
       id: notificationId,
+      // biome-ignore lint/suspicious/noExplicitAny: notificationType is dynamic based on FHIR tags --- IGNORE ---
       notificationType: communication.meta?.tag?.[2]?.code as any,
       title: communication.topic?.text || null,
+      // biome-ignore lint/suspicious/noExplicitAny: contextName is dynamic based on notification type --- IGNORE ---
       contextName: communication.meta?.tag?.[1]?.code as any,
       contextParameters: JSON.parse(communication.note?.[0]?.text || '{}'),
       sendAfter: communication.sent ? new Date(communication.sent) : null,
@@ -244,11 +246,16 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       subjectTemplate: subjectTemplateFromId,
       extraParams: {},
       status:
-        communication.status === 'completed' ? 'SENT' : communication.status === 'stopped' ? 'FAILED' : 'PENDING_SEND',
+        communication.status === 'completed'
+          ? 'SENT'
+          : communication.status === 'stopped'
+            ? 'FAILED'
+            : 'PENDING_SEND',
       contextUsed,
       adapterUsed,
       gitCommitSha,
-      sentAt: communication.status === 'completed' ? new Date(communication.sent || new Date()) : null,
+      sentAt:
+        communication.status === 'completed' ? new Date(communication.sent || new Date()) : null,
       readAt: null,
       createdAt: new Date(communication.meta?.lastUpdated || new Date()),
       updatedAt: new Date(communication.meta?.lastUpdated || new Date()),
@@ -281,7 +288,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     return communications.map((comm) => this.mapToDatabaseNotification(comm));
   }
 
-  async getPendingNotifications(page: number, pageSize: number): Promise<AnyDatabaseNotification<Config>[]> {
+  async getPendingNotifications(
+    page: number,
+    pageSize: number,
+  ): Promise<AnyDatabaseNotification<Config>[]> {
     const now = new Date().toISOString();
     const communications = await this.medplum.searchResources('Communication', {
       status: 'in-progress',
@@ -303,7 +313,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     return communications.map((comm) => this.mapToDatabaseNotification(comm));
   }
 
-  async getFutureNotifications(page: number, pageSize: number): Promise<AnyDatabaseNotification<Config>[]> {
+  async getFutureNotifications(
+    page: number,
+    pageSize: number,
+  ): Promise<AnyDatabaseNotification<Config>[]> {
     const now = new Date().toISOString();
     const communications = await this.medplum.searchResources('Communication', {
       status: 'in-progress',
@@ -316,7 +329,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   async getAllFutureNotificationsFromUser(
-    referenceString: Config['UserIdType']
+    referenceString: Config['UserIdType'],
   ): Promise<DatabaseNotification<Config>[]> {
     const now = new Date().toISOString();
     const communications = await this.medplum.searchResources('Communication', {
@@ -333,7 +346,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async getFutureNotificationsFromUser(
     referenceString: Config['UserIdType'],
     page: number,
-    pageSize: number
+    pageSize: number,
   ): Promise<DatabaseNotification<Config>[]> {
     const now = new Date().toISOString();
     const communications = await this.medplum.searchResources('Communication', {
@@ -361,9 +374,15 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       ? [
           {
             contentString: notification.bodyTemplate,
-            extension: notification.subjectTemplate && this.options.emailNotificationSubjectExtensionUrl
-              ? [{ url: this.options.emailNotificationSubjectExtensionUrl, valueString: notification.subjectTemplate }]
-              : undefined,
+            extension:
+              notification.subjectTemplate && this.options.emailNotificationSubjectExtensionUrl
+                ? [
+                    {
+                      url: this.options.emailNotificationSubjectExtensionUrl,
+                      valueString: notification.subjectTemplate,
+                    },
+                  ]
+                : undefined,
           },
         ]
       : [];
@@ -380,7 +399,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       { system: IDENTIFIER_SYSTEMS.bodyTemplate, value: notification.bodyTemplate },
     ];
     if (notification.subjectTemplate) {
-      identifiers.push({ system: IDENTIFIER_SYSTEMS.subjectTemplate, value: notification.subjectTemplate });
+      identifiers.push({
+        system: IDENTIFIER_SYSTEMS.subjectTemplate,
+        value: notification.subjectTemplate,
+      });
     }
     if (notificationWithOptionalGitCommitSha.gitCommitSha) {
       identifiers.push({
@@ -409,13 +431,19 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     };
 
     const created = await this.medplum.createResource(communication);
-    const mappedNotification = this.mapToDatabaseNotification(created) as DatabaseNotification<Config>;
+    const mappedNotification = this.mapToDatabaseNotification(
+      created,
+    ) as DatabaseNotification<Config>;
 
     // Load and attach attachments to the returned notification if they were provided
     if (notification.attachments && notification.attachments.length > 0) {
-      this.logger?.info(`[MedplumBackend] Loading ${notification.attachments.length} attachments for notification ${mappedNotification.id}`);
+      this.logger?.info(
+        `[MedplumBackend] Loading ${notification.attachments.length} attachments for notification ${mappedNotification.id}`,
+      );
       mappedNotification.attachments = await this.getAttachments(mappedNotification.id);
-      this.logger?.info(`[MedplumBackend] Loaded ${mappedNotification.attachments?.length || 0} attachments for notification ${mappedNotification.id}`);
+      this.logger?.info(
+        `[MedplumBackend] Loaded ${mappedNotification.attachments?.length || 0} attachments for notification ${mappedNotification.id}`,
+      );
     }
 
     return mappedNotification;
@@ -427,7 +455,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   ): Promise<DatabaseNotification<Config>> {
     const existing = await this.medplum.readResource('Communication', notificationId as string);
     const status = 'status' in notification ? notification.status : undefined;
-    const subjectTemplate = 'subjectTemplate' in notification ? notification.subjectTemplate : undefined;
+    const subjectTemplate =
+      'subjectTemplate' in notification ? notification.subjectTemplate : undefined;
 
     // Update identifiers for searchable fields when they change
     const existingIdentifiers = existing.identifier || [];
@@ -545,7 +574,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     };
 
     upsert(IDENTIFIER_SYSTEMS.bodyTemplate, notification.bodyTemplate as string | undefined);
-    upsert(IDENTIFIER_SYSTEMS.subjectTemplate, notification.subjectTemplate as string | null | undefined);
+    upsert(
+      IDENTIFIER_SYSTEMS.subjectTemplate,
+      notification.subjectTemplate as string | null | undefined,
+    );
     upsert(IDENTIFIER_SYSTEMS.adapterUsed, notification.adapterUsed as string | null | undefined);
     upsert(IDENTIFIER_SYSTEMS.gitCommitSha, notification.gitCommitSha as string | null | undefined);
 
@@ -594,7 +626,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     return communications.map((comm) => this.mapToDatabaseNotification(comm));
   }
 
-  async getNotifications(page: number, pageSize: number): Promise<AnyDatabaseNotification<Config>[]> {
+  async getNotifications(
+    page: number,
+    pageSize: number,
+  ): Promise<AnyDatabaseNotification<Config>[]> {
     const communications = await this.medplum.searchResources('Communication', {
       _tag: 'notification',
       _count: pageSize.toString(),
@@ -604,7 +639,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   async bulkPersistNotifications(
-    notifications: Omit<NotificationInput<Config>, 'id'>[]
+    notifications: Omit<NotificationInput<Config>, 'id'>[],
   ): Promise<Config['NotificationIdType'][]> {
     const ids: Config['NotificationIdType'][] = [];
 
@@ -613,7 +648,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         { system: IDENTIFIER_SYSTEMS.bodyTemplate, value: notification.bodyTemplate },
       ];
       if (notification.subjectTemplate) {
-        bulkIdentifiers.push({ system: IDENTIFIER_SYSTEMS.subjectTemplate, value: notification.subjectTemplate });
+        bulkIdentifiers.push({
+          system: IDENTIFIER_SYSTEMS.subjectTemplate,
+          value: notification.subjectTemplate,
+        });
       }
       const notificationWithOptionalGitCommitSha = notification as Omit<
         NotificationInput<Config>,
@@ -637,9 +675,15 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
           ? [
               {
                 contentString: notification.bodyTemplate,
-                extension: notification.subjectTemplate && this.options.emailNotificationSubjectExtensionUrl
-                  ? [{ url: this.options.emailNotificationSubjectExtensionUrl, valueString: notification.subjectTemplate }]
-                  : undefined,
+                extension:
+                  notification.subjectTemplate && this.options.emailNotificationSubjectExtensionUrl
+                    ? [
+                        {
+                          url: this.options.emailNotificationSubjectExtensionUrl,
+                          valueString: notification.subjectTemplate,
+                        },
+                      ]
+                    : undefined,
               },
             ]
           : [],
@@ -664,7 +708,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   async markAsSent(
     notificationId: Config['NotificationIdType'],
-    checkIsPending = true
+    checkIsPending = true,
   ): Promise<AnyDatabaseNotification<Config>> {
     const notification = await this.getNotification(notificationId, false);
     if (checkIsPending && notification?.status !== 'PENDING_SEND') {
@@ -686,7 +730,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   async markAsFailed(
     notificationId: Config['NotificationIdType'],
-    checkIsPending = true
+    checkIsPending = true,
   ): Promise<AnyDatabaseNotification<Config>> {
     const notification = await this.getNotification(notificationId, false);
     if (checkIsPending && notification?.status !== 'PENDING_SEND') {
@@ -708,7 +752,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   async markAsRead(
     notificationId: Config['NotificationIdType'],
-    checkIsSent = true
+    checkIsSent = true,
   ): Promise<DatabaseNotification<Config>> {
     const notification = await this.getNotification(notificationId, false);
     if (checkIsSent && notification?.status !== 'SENT') {
@@ -729,10 +773,13 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async getNotification(
     notificationId: Config['NotificationIdType'],
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _forUpdate: boolean
+    _forUpdate: boolean,
   ): Promise<AnyDatabaseNotification<Config> | null> {
     try {
-      const communication = await this.medplum.readResource('Communication', notificationId as string);
+      const communication = await this.medplum.readResource(
+        'Communication',
+        notificationId as string,
+      );
       return this.mapToDatabaseNotification(communication);
     } catch {
       return null;
@@ -740,7 +787,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   async filterAllInAppUnreadNotifications(
-    refenrenceString: Config['UserIdType']
+    refenrenceString: Config['UserIdType'],
   ): Promise<DatabaseNotification<Config>[]> {
     const communications = await this.medplum.searchResources('Communication', [
       ['status', 'completed'],
@@ -756,7 +803,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async filterInAppUnreadNotifications(
     refenrenceString: Config['UserIdType'],
     page: number,
-    pageSize: number
+    pageSize: number,
   ): Promise<DatabaseNotification<Config>[]> {
     const communications = await this.medplum.searchResources('Communication', [
       ['status', 'completed'],
@@ -771,9 +818,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       .filter((notif): notif is DatabaseNotification<Config> => 'userId' in notif && !notif.readAt);
   }
 
-  async getUserEmailFromNotification(notificationId: Config['NotificationIdType']): Promise<string | undefined> {
+  async getUserEmailFromNotification(
+    notificationId: Config['NotificationIdType'],
+  ): Promise<string | undefined> {
     try {
-      const communication = await this.medplum.readResource('Communication', notificationId as string);
+      const communication = await this.medplum.readResource(
+        'Communication',
+        notificationId as string,
+      );
       const practitionerRef = communication.recipient?.[0]?.reference;
 
       if (!practitionerRef) {
@@ -797,16 +849,23 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     }
   }
 
-  async storeAdapterAndContextUsed(notificationId: Config['NotificationIdType'], adapterKey: string, context: InputJsonValue): Promise<void> {
-    const communication = await this.medplum.readResource('Communication', notificationId as string);
+  async storeAdapterAndContextUsed(
+    notificationId: Config['NotificationIdType'],
+    adapterKey: string,
+    context: InputJsonValue,
+  ): Promise<void> {
+    const communication = await this.medplum.readResource(
+      'Communication',
+      notificationId as string,
+    );
     const contextUsedExtensionUrl = 'http://vintasend.com/fhir/StructureDefinition/contextUsed';
     // Remove any existing contextUsed extension, then add the new one
     const existingExtensions = (communication.extension || []).filter(
-      (ext) => ext.url !== contextUsedExtensionUrl
+      (ext) => ext.url !== contextUsedExtensionUrl,
     );
     // Upsert the adapterUsed identifier
     const existingIdentifiers = (communication.identifier || []).filter(
-      (id) => id.system !== IDENTIFIER_SYSTEMS.adapterUsed
+      (id) => id.system !== IDENTIFIER_SYSTEMS.adapterUsed,
     );
     const updated: Communication = {
       ...communication,
@@ -841,9 +900,15 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       ? [
           {
             contentString: notification.bodyTemplate,
-            extension: notification.subjectTemplate && this.options.emailNotificationSubjectExtensionUrl
-              ? [{ url: this.options.emailNotificationSubjectExtensionUrl, valueString: notification.subjectTemplate }]
-              : undefined,
+            extension:
+              notification.subjectTemplate && this.options.emailNotificationSubjectExtensionUrl
+                ? [
+                    {
+                      url: this.options.emailNotificationSubjectExtensionUrl,
+                      valueString: notification.subjectTemplate,
+                    },
+                  ]
+                : undefined,
           },
         ]
       : [];
@@ -860,7 +925,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       { system: IDENTIFIER_SYSTEMS.bodyTemplate, value: notification.bodyTemplate },
     ];
     if (notification.subjectTemplate) {
-      oneOffIdentifiers.push({ system: IDENTIFIER_SYSTEMS.subjectTemplate, value: notification.subjectTemplate });
+      oneOffIdentifiers.push({
+        system: IDENTIFIER_SYSTEMS.subjectTemplate,
+        value: notification.subjectTemplate,
+      });
     }
     if (notificationWithOptionalGitCommitSha.gitCommitSha) {
       oneOffIdentifiers.push({
@@ -879,9 +947,18 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       identifier: oneOffIdentifiers,
       note: [{ text: JSON.stringify(notification.contextParameters) }],
       extension: [
-        { url: 'http://vintasend.com/fhir/StructureDefinition/emailOrPhone', valueString: notification.emailOrPhone },
-        { url: 'http://vintasend.com/fhir/StructureDefinition/firstName', valueString: notification.firstName },
-        { url: 'http://vintasend.com/fhir/StructureDefinition/lastName', valueString: notification.lastName },
+        {
+          url: 'http://vintasend.com/fhir/StructureDefinition/emailOrPhone',
+          valueString: notification.emailOrPhone,
+        },
+        {
+          url: 'http://vintasend.com/fhir/StructureDefinition/firstName',
+          valueString: notification.firstName,
+        },
+        {
+          url: 'http://vintasend.com/fhir/StructureDefinition/lastName',
+          valueString: notification.lastName,
+        },
       ],
       meta: {
         tag: [
@@ -894,7 +971,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     };
 
     const created = await this.medplum.createResource(communication);
-    const mappedNotification = this.mapToDatabaseNotification(created) as DatabaseOneOffNotification<Config>;
+    const mappedNotification = this.mapToDatabaseNotification(
+      created,
+    ) as DatabaseOneOffNotification<Config>;
 
     // Load and attach attachments to the returned notification if they were provided
     if (notification.attachments && notification.attachments.length > 0) {
@@ -910,7 +989,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   ): Promise<DatabaseOneOffNotification<Config>> {
     const existing = await this.medplum.readResource('Communication', notificationId as string);
     const status = 'status' in notification ? notification.status : undefined;
-    const subjectTemplate = 'subjectTemplate' in notification ? notification.subjectTemplate : undefined;
+    const subjectTemplate =
+      'subjectTemplate' in notification ? notification.subjectTemplate : undefined;
 
     const existingIdentifiers = existing.identifier || [];
     const updatedIdentifiers = this.updateIdentifiers(existingIdentifiers, notification);
@@ -950,7 +1030,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       ['_tag', 'notification'],
       ['_tag', 'one-off'],
     ]);
-    return communications.map((comm) => this.mapToDatabaseNotification(comm) as DatabaseOneOffNotification<Config>);
+    return communications.map(
+      (comm) => this.mapToDatabaseNotification(comm) as DatabaseOneOffNotification<Config>,
+    );
   }
 
   async getOneOffNotifications(
@@ -963,7 +1045,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       ['_count', pageSize.toString()],
       ['_offset', (page * pageSize).toString()],
     ]);
-    return communications.map((comm) => this.mapToDatabaseNotification(comm) as DatabaseOneOffNotification<Config>);
+    return communications.map(
+      (comm) => this.mapToDatabaseNotification(comm) as DatabaseOneOffNotification<Config>,
+    );
   }
 
   /* Notification filtering methods */
@@ -980,7 +1064,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    *   - `adapterUsed`       → `identifier` (system: vintasend adapter-used)
    *   - `bodyTemplate`      → `identifier` (system: vintasend body-template)
    *   - `subjectTemplate`   → `identifier` (system: vintasend subject-template)
-  *   - `sendAfterRange`    → `sent` (date comparators)
+   *   - `sendAfterRange`    → `sent` (date comparators)
    *   - `sentAtRange`       → `sent` (date comparators)
    *   - `createdAtRange`    → `_lastUpdated` (date comparators)
    *
@@ -1060,9 +1144,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    * Recursively build FHIR search parameters from a NotificationFilter tree.
    * Handles field filters, AND, and NOT. OR is handled at the caller level.
    */
-  private buildFhirSearchParams(
-    filter: NotificationFilter<Config>,
-  ): Record<string, string> {
+  private buildFhirSearchParams(filter: NotificationFilter<Config>): Record<string, string> {
     if ('or' in filter) {
       throw new Error(
         'OR filters are not supported by MedplumNotificationBackend (FHIR search does not support OR logic).',
@@ -1070,15 +1152,11 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     }
 
     if ('and' in filter) {
-      return this.mergeAndFilters(
-        (filter as { and: NotificationFilter<Config>[] }).and,
-      );
+      return this.mergeAndFilters((filter as { and: NotificationFilter<Config>[] }).and);
     }
 
     if ('not' in filter) {
-      return this.negateFilter(
-        (filter as { not: NotificationFilter<Config> }).not,
-      );
+      return this.negateFilter((filter as { not: NotificationFilter<Config> }).not);
     }
 
     // Leaf field filter
@@ -1088,9 +1166,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   /**
    * Merge FHIR search parameters from multiple AND sub-filters.
    */
-  private mergeAndFilters(
-    subFilters: NotificationFilter<Config>[],
-  ): Record<string, string> {
+  private mergeAndFilters(subFilters: NotificationFilter<Config>[]): Record<string, string> {
     const merged: Record<string, string> = {};
     for (const sub of subFilters) {
       const params = this.buildFhirSearchParams(sub);
@@ -1098,8 +1174,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         if (key in merged && merged[key] !== value) {
           throw new Error(
             `Conflicting values for FHIR search parameter '${key}' in AND filter: ` +
-            `'${merged[key]}' vs '${value}'. ` +
-            'AND sub-filters must not set different values for the same search parameter.',
+              `'${merged[key]}' vs '${value}'. ` +
+              'AND sub-filters must not set different values for the same search parameter.',
           );
         }
         merged[key] = value;
@@ -1119,7 +1195,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Status → Communication.status (comma-separated = OR)
     if (filter.status !== undefined) {
-      const statuses: NotificationStatus[] = Array.isArray(filter.status) ? filter.status : [filter.status];
+      const statuses: NotificationStatus[] = Array.isArray(filter.status)
+        ? filter.status
+        : [filter.status];
       const fhirStatuses = statuses
         .map((s) => this.mapStatusToFhirStatus(s))
         .filter((s): s is string => s !== null);
@@ -1139,9 +1217,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     // contextName → _tag (appended to existing _tag)
     if (filter.contextName !== undefined) {
       const contextName = this.resolveStringFieldForFhir('contextName', filter.contextName);
-      params._tag = params._tag
-        ? `${params._tag},${contextName}`
-        : contextName;
+      params._tag = params._tag ? `${params._tag},${contextName}` : contextName;
     }
 
     // UserId → recipient
@@ -1154,9 +1230,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       const adapters: string[] = Array.isArray(filter.adapterUsed)
         ? filter.adapterUsed
         : [filter.adapterUsed];
-      params.identifier = adapters
-        .map((a) => `${IDENTIFIER_SYSTEMS.adapterUsed}|${a}`)
-        .join(',');
+      params.identifier = adapters.map((a) => `${IDENTIFIER_SYSTEMS.adapterUsed}|${a}`).join(',');
     }
 
     // bodyTemplate → identifier search with system
@@ -1169,7 +1243,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // subjectTemplate → identifier search with system
     if (filter.subjectTemplate !== undefined) {
-      const subjectTemplate = this.resolveStringFieldForFhir('subjectTemplate', filter.subjectTemplate);
+      const subjectTemplate = this.resolveStringFieldForFhir(
+        'subjectTemplate',
+        filter.subjectTemplate,
+      );
       params.identifier = params.identifier
         ? `${params.identifier},${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`
         : `${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`;
@@ -1212,9 +1289,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    * Negate a simple field filter using the FHIR `:not` modifier.
    * Only supports `status`, `notificationType`, and `userId`.
    */
-  private negateFilter(
-    inner: NotificationFilter<Config>,
-  ): Record<string, string> {
+  private negateFilter(inner: NotificationFilter<Config>): Record<string, string> {
     if (!isFieldFilter(inner)) {
       throw new Error(
         'NOT filters are only supported for simple field filters in MedplumNotificationBackend.',
@@ -1227,7 +1302,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     const filter = inner as NotificationFilterFields<Config>;
 
     if (filter.status !== undefined) {
-      const statuses: NotificationStatus[] = Array.isArray(filter.status) ? filter.status : [filter.status];
+      const statuses: NotificationStatus[] = Array.isArray(filter.status)
+        ? filter.status
+        : [filter.status];
       const fhirStatuses = statuses
         .map((s) => this.mapStatusToFhirStatus(s))
         .filter((s): s is string => s !== null);
@@ -1271,7 +1348,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     }
 
     if (filter.subjectTemplate !== undefined) {
-      const subjectTemplate = this.resolveStringFieldForFhir('subjectTemplate', filter.subjectTemplate);
+      const subjectTemplate = this.resolveStringFieldForFhir(
+        'subjectTemplate',
+        filter.subjectTemplate,
+      );
       params['identifier:not'] = params['identifier:not']
         ? `${params['identifier:not']},${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`
         : `${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`;
@@ -1281,10 +1361,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       throw new Error('NOT filter on sentAtRange is not supported by MedplumNotificationBackend.');
     }
     if (filter.sendAfterRange) {
-      throw new Error('NOT filter on sendAfterRange is not supported by MedplumNotificationBackend.');
+      throw new Error(
+        'NOT filter on sendAfterRange is not supported by MedplumNotificationBackend.',
+      );
     }
     if (filter.createdAtRange) {
-      throw new Error('NOT filter on createdAtRange is not supported by MedplumNotificationBackend.');
+      throw new Error(
+        'NOT filter on createdAtRange is not supported by MedplumNotificationBackend.',
+      );
     }
 
     if (Object.keys(params).length === 0) {
@@ -1299,9 +1383,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   /**
    * Throw if the filter uses fields not queryable via FHIR search.
    */
-  private throwIfUnsupportedField(
-    _filter: NotificationFilterFields<Config>,
-  ): void {
+  private throwIfUnsupportedField(_filter: NotificationFilterFields<Config>): void {
     // All fields in the current NotificationFilterFields are supported.
     // This method is kept as a guard for future additions.
   }
@@ -1401,7 +1483,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Extract Binary ID from identifier
     const binaryIdIdentifier = media.identifier?.find(
-      (id) => id.system === 'http://vintasend.com/fhir/binary-id'
+      (id) => id.system === 'http://vintasend.com/fhir/binary-id',
     );
     let binaryId = binaryIdIdentifier?.value;
 
@@ -1415,7 +1497,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Extract checksum from identifier
     const checksumIdentifier = media.identifier?.find(
-      (id) => id.system === 'http://vintasend.com/fhir/attachment-checksum'
+      (id) => id.system === 'http://vintasend.com/fhir/attachment-checksum',
     );
     const checksum = checksumIdentifier?.value || '';
 
@@ -1465,7 +1547,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     try {
       const results = await this.medplum.searchResources(
         'Media',
-        `identifier=${checksum}&_tag=vintasend-backend-attachment-metadata`
+        `identifier=${checksum}&_tag=vintasend-backend-attachment-metadata`,
       );
 
       if (results.length === 0) {
@@ -1482,7 +1564,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   /**
    * Find multiple attachment files by their checksums in a single query
    */
-  private async findAttachmentFilesByChecksums(checksums: string[]): Promise<Map<string, AttachmentFileRecord>> {
+  private async findAttachmentFilesByChecksums(
+    checksums: string[],
+  ): Promise<Map<string, AttachmentFileRecord>> {
     if (checksums.length === 0) {
       return new Map();
     }
@@ -1492,14 +1576,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       const identifierQuery = checksums.join(',');
       const results = await this.medplum.searchResources(
         'Media',
-        `identifier=${identifierQuery}&_tag=vintasend-backend-attachment-metadata`
+        `identifier=${identifierQuery}&_tag=vintasend-backend-attachment-metadata`,
       );
 
       // Map results by checksum
       const filesByChecksum = new Map<string, AttachmentFileRecord>();
       for (const media of results) {
         const checksum = media.identifier?.find(
-          (id) => id.system === 'http://vintasend.com/fhir/attachment-checksum'
+          (id) => id.system === 'http://vintasend.com/fhir/attachment-checksum',
         )?.value;
         if (checksum) {
           const fileRecord = this.mediaToAttachmentFileRecord(media);
@@ -1521,7 +1605,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    * Works with any AttachmentManager implementation
    */
   private async processAttachments(
-    attachments: NotificationAttachment[]
+    attachments: NotificationAttachment[],
   ): Promise<Communication['payload']> {
     const manager = this.getAttachmentManager();
     const payload: Communication['payload'] = [];
@@ -1542,7 +1626,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         fileReferences.push({
           index: i,
           fileId: attachment.fileId,
-          description: attachment.description
+          description: attachment.description,
         });
       } else if ('file' in attachment) {
         newUploads.push({
@@ -1550,7 +1634,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
           file: attachment.file,
           filename: attachment.filename,
           contentType: attachment.contentType || 'application/octet-stream',
-          description: attachment.description
+          description: attachment.description,
         });
       }
     }
@@ -1559,8 +1643,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     const referencedFiles = await Promise.all(
       fileReferences.map(async ({ fileId }) => ({
         fileId,
-        record: await this.getAttachmentFileRecord(fileId)
-      }))
+        record: await this.getAttachmentFileRecord(fileId),
+      })),
     );
 
     // Calculate checksums for new uploads using manager's fileToBuffer
@@ -1569,15 +1653,19 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         const buffer = await manager.fileToBuffer(upload.file);
         const checksum = await manager.calculateChecksum(buffer);
         return { ...upload, buffer, checksum };
-      })
+      }),
     );
 
     // Batch lookup existing files by checksums
-    const checksums = uploadsWithChecksums.map(u => u.checksum);
+    const checksums = uploadsWithChecksums.map((u) => u.checksum);
     const existingFilesByChecksum = await this.findAttachmentFilesByChecksums(checksums);
 
     // Process file references
-    const fileRecords: Array<{ index: number; record: AttachmentFileRecord; description?: string }> = [];
+    const fileRecords: Array<{
+      index: number;
+      record: AttachmentFileRecord;
+      description?: string;
+    }> = [];
 
     for (let i = 0; i < fileReferences.length; i++) {
       const { index, description } = fileReferences[i];
@@ -1588,7 +1676,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       fileRecords.push({
         index,
         record,
-        description
+        description,
       });
     }
 
@@ -1602,11 +1690,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         fileRecord = existingFile;
       } else {
         // Upload new file to the manager
-        fileRecord = await manager.uploadFile(
-          upload.file,
-          upload.filename,
-          upload.contentType
-        );
+        fileRecord = await manager.uploadFile(upload.file, upload.filename, upload.contentType);
         // Store the record in the backend's database
         await this.storeAttachmentFileRecord(fileRecord);
       }
@@ -1614,7 +1698,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       fileRecords.push({
         index: upload.index,
         record: fileRecord,
-        description: upload.description
+        description: upload.description,
       });
     }
 
@@ -1667,7 +1751,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       });
 
       return communications.some((comm) =>
-        comm.payload?.some((p) => p.contentAttachment?.url?.includes(fileId))
+        comm.payload?.some((p) => p.contentAttachment?.url?.includes(fileId)),
       );
     } catch {
       return false;
@@ -1710,22 +1794,33 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async getAttachments(notificationId: Config['NotificationIdType']): Promise<StoredAttachment[]> {
     this.getAttachmentManager(); // Ensure attachment manager is injected
     try {
-      const communication = await this.medplum.readResource('Communication', notificationId as string);
+      const communication = await this.medplum.readResource(
+        'Communication',
+        notificationId as string,
+      );
       const attachments: StoredAttachment[] = [];
 
-      this.logger?.info(`[MedplumBackend.getAttachments] Fetching attachments for notification ${notificationId}`);
-      this.logger?.info(`[MedplumBackend.getAttachments] Communication has ${communication.payload?.length || 0} payload items`);
+      this.logger?.info(
+        `[MedplumBackend.getAttachments] Fetching attachments for notification ${notificationId}`,
+      );
+      this.logger?.info(
+        `[MedplumBackend.getAttachments] Communication has ${communication.payload?.length || 0} payload items`,
+      );
 
       // Extract all Media IDs from payload
       const mediaIds: string[] = [];
       const payloadMap = new Map<string, { description?: string }>();
 
       for (const payload of communication.payload || []) {
-        this.logger?.info(`[MedplumBackend.getAttachments] Payload item: ${JSON.stringify(payload, null, 2)}`);
+        this.logger?.info(
+          `[MedplumBackend.getAttachments] Payload item: ${JSON.stringify(payload, null, 2)}`,
+        );
         const attachment = payload.contentAttachment;
         if (!attachment || !attachment.url) continue;
 
-        this.logger?.info(`[MedplumBackend.getAttachments] Found attachment URL: ${attachment.url}`);
+        this.logger?.info(
+          `[MedplumBackend.getAttachments] Found attachment URL: ${attachment.url}`,
+        );
 
         // Extract Media ID from URL
         const match = attachment.url.match(/Media\/([^/]+)/);
@@ -1737,19 +1832,27 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         payloadMap.set(mediaId, { description: attachment.title });
       }
 
-      this.logger?.info(`[MedplumBackend.getAttachments] Found ${mediaIds.length} media IDs: ${mediaIds.join(', ')}`);
+      this.logger?.info(
+        `[MedplumBackend.getAttachments] Found ${mediaIds.length} media IDs: ${mediaIds.join(', ')}`,
+      );
 
       // Fetch all Media resources in a single query
       if (mediaIds.length === 0) {
-        this.logger?.info(`[MedplumBackend.getAttachments] No media IDs found, returning empty array`);
+        this.logger?.info(
+          `[MedplumBackend.getAttachments] No media IDs found, returning empty array`,
+        );
         return [];
       }
 
-      this.logger?.info(`[MedplumBackend.getAttachments] Searching for Media resources with _id: ${mediaIds.join(',')}`);
+      this.logger?.info(
+        `[MedplumBackend.getAttachments] Searching for Media resources with _id: ${mediaIds.join(',')}`,
+      );
       const mediaResources = await this.medplum.searchResources('Media', {
         _id: mediaIds.join(','),
       });
-      this.logger?.info(`[MedplumBackend.getAttachments] Search returned ${mediaResources.length} Media resources`);
+      this.logger?.info(
+        `[MedplumBackend.getAttachments] Search returned ${mediaResources.length} Media resources`,
+      );
 
       // Build attachments from the fetched Media resources
       for (const media of mediaResources) {
@@ -1777,7 +1880,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         this.logger?.info(`[MedplumBackend.getAttachments] Added attachment ${media.id} to list`);
       }
 
-      this.logger?.info(`[MedplumBackend.getAttachments] Returning ${attachments.length} attachments`);
+      this.logger?.info(
+        `[MedplumBackend.getAttachments] Returning ${attachments.length} attachments`,
+      );
       return attachments;
     } catch (error) {
       this.logger?.info(`[MedplumBackend.getAttachments] Error fetching attachments: ${error}`);
@@ -1789,12 +1894,15 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     notificationId: Config['NotificationIdType'],
     attachmentId: string,
   ): Promise<void> {
-    const communication = await this.medplum.readResource('Communication', notificationId as string);
+    const communication = await this.medplum.readResource(
+      'Communication',
+      notificationId as string,
+    );
 
     // Check if attachment exists
     const hasAttachment = (communication.payload || []).some((p) => {
       const url = p.contentAttachment?.url;
-      return url && url.includes(attachmentId);
+      return url?.includes(attachmentId);
     });
 
     if (!hasAttachment) {

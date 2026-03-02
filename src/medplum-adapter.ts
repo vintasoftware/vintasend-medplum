@@ -1,10 +1,12 @@
 import type { MedplumClient } from '@medplum/core';
-import type { BaseEmailTemplateRenderer } from 'vintasend/dist/services/notification-template-renderers/base-email-template-renderer';
-import { BaseNotificationAdapter } from 'vintasend/dist/services/notification-adapters/base-notification-adapter';
-import type { JsonObject } from 'vintasend/dist/types/json-values';
-import type { AnyDatabaseNotification } from 'vintasend/dist/types/notification';
-import type { BaseNotificationTypeConfig } from 'vintasend/dist/types/notification-type-config';
-import type { StoredAttachment } from 'vintasend/dist/types/attachment';
+import type {
+  AnyDatabaseNotification,
+  BaseEmailTemplateRenderer,
+  BaseNotificationTypeConfig,
+  JsonObject,
+  StoredAttachment,
+} from 'vintasend';
+import { BaseNotificationAdapter } from 'vintasend';
 
 export class MedplumNotificationAdapter<
   TemplateRenderer extends BaseEmailTemplateRenderer<Config>,
@@ -60,20 +62,25 @@ export class MedplumNotificationAdapter<
       attachments?: StoredAttachment[];
     };
 
-    if (notificationWithAttachments.attachments && notificationWithAttachments.attachments.length > 0) {
-      emailOptions.attachments = await this.prepareAttachments(notificationWithAttachments.attachments);
+    if (
+      notificationWithAttachments.attachments &&
+      notificationWithAttachments.attachments.length > 0
+    ) {
+      emailOptions.attachments = await this.prepareAttachments(
+        notificationWithAttachments.attachments,
+      );
     }
 
     await this.medplum.sendEmail(emailOptions);
   }
 
-  protected async prepareAttachments(
-    attachments: StoredAttachment[],
-  ): Promise<Array<{
-    filename: string;
-    content: string;
-    contentType: string;
-  }>> {
+  protected async prepareAttachments(attachments: StoredAttachment[]): Promise<
+    Array<{
+      filename: string;
+      content: string;
+      contentType: string;
+    }>
+  > {
     return Promise.all(
       attachments.map(async (att) => {
         const buffer = await att.file.read();
@@ -82,12 +89,10 @@ export class MedplumNotificationAdapter<
           content: buffer.toString('base64'),
           contentType: att.contentType,
         };
-      })
+      }),
     );
   }
 }
-
-
 
 export class MedplumNotificationAdapterFactory<Config extends BaseNotificationTypeConfig> {
   create<TemplateRenderer extends BaseEmailTemplateRenderer<Config>>(

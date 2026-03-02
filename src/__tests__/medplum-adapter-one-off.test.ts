@@ -1,8 +1,11 @@
 import { MockClient } from '@medplum/mock';
-import type { BaseEmailTemplateRenderer } from 'vintasend/dist/services/notification-template-renderers/base-email-template-renderer';
-import type { DatabaseNotification, DatabaseOneOffNotification } from 'vintasend/dist/types/notification';
-import type { MedplumNotificationBackend } from '../medplum-backend';
+import type {
+  BaseEmailTemplateRenderer,
+  DatabaseNotification,
+  DatabaseOneOffNotification,
+} from 'vintasend';
 import { MedplumNotificationAdapter } from '../medplum-adapter';
+import type { MedplumNotificationBackend } from '../medplum-backend';
 
 /**
  * Tests for MedplumNotificationAdapter one-off notifications support.

@@ -1,5 +1,5 @@
+import type { Binary, Media } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
-import type { Media, Binary } from '@medplum/fhirtypes';
 import { MedplumAttachmentManager } from '../medplum-attachment-manager';
 
 type MediaWithId = Media & { id: string };
@@ -65,7 +65,8 @@ describe('MedplumAttachmentManager', () => {
         createdDateTime: expect.any(String),
       };
 
-      const createResourceSpy = vi.spyOn(medplumClient, 'createResource')
+      const createResourceSpy = vi
+        .spyOn(medplumClient, 'createResource')
         .mockResolvedValueOnce(mockBinary as any)
         .mockResolvedValueOnce(mockMedia as any);
 
@@ -81,15 +82,18 @@ describe('MedplumAttachmentManager', () => {
       });
 
       // Verify Media resource creation
-      expect(createResourceSpy).toHaveBeenNthCalledWith(2, expect.objectContaining({
-        resourceType: 'Media',
-        status: 'completed',
-        content: expect.objectContaining({
-          contentType,
-          size: buffer.length,
-          title: filename,
+      expect(createResourceSpy).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          resourceType: 'Media',
+          status: 'completed',
+          content: expect.objectContaining({
+            contentType,
+            size: buffer.length,
+            title: filename,
+          }),
         }),
-      }));
+      );
 
       // Verify the result structure
       expect(result).toMatchObject({
@@ -259,7 +263,9 @@ describe('MedplumAttachmentManager', () => {
         createdDateTime: '2026-01-15T00:00:00Z',
       };
 
-      const readResourceSpy = vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
+      const readResourceSpy = vi
+        .spyOn(medplumClient, 'readResource')
+        .mockResolvedValue(mockMedia as any);
 
       const result = await manager.getFile('media-123');
 
@@ -329,8 +335,12 @@ describe('MedplumAttachmentManager', () => {
         },
       };
 
-      const readResourceSpy = vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
-      const deleteResourceSpy = vi.spyOn(medplumClient, 'deleteResource').mockResolvedValue({} as any);
+      const readResourceSpy = vi
+        .spyOn(medplumClient, 'readResource')
+        .mockResolvedValue(mockMedia as any);
+      const deleteResourceSpy = vi
+        .spyOn(medplumClient, 'deleteResource')
+        .mockResolvedValue({} as any);
 
       await manager.deleteFile('media-123');
 
@@ -361,7 +371,9 @@ describe('MedplumAttachmentManager', () => {
       };
 
       vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockMedia as any);
-      const deleteResourceSpy = vi.spyOn(medplumClient, 'deleteResource').mockResolvedValue({} as any);
+      const deleteResourceSpy = vi
+        .spyOn(medplumClient, 'deleteResource')
+        .mockResolvedValue({} as any);
 
       await manager.deleteFile('media-123');
 
@@ -443,7 +455,9 @@ describe('MedplumAttachmentManager', () => {
           data: Buffer.from('test content').toString('base64'),
         };
 
-        const readResourceSpy = vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
+        const readResourceSpy = vi
+          .spyOn(medplumClient, 'readResource')
+          .mockResolvedValue(mockBinary as any);
 
         const result = await attachmentFile.read();
 
@@ -467,7 +481,7 @@ describe('MedplumAttachmentManager', () => {
         // Create a proper ArrayBuffer from the buffer
         const mockArrayBuffer = testBuffer.buffer.slice(
           testBuffer.byteOffset,
-          testBuffer.byteOffset + testBuffer.byteLength
+          testBuffer.byteOffset + testBuffer.byteLength,
         );
 
         global.fetch = vi.fn().mockResolvedValue({
@@ -497,7 +511,9 @@ describe('MedplumAttachmentManager', () => {
           statusText: 'Not Found',
         });
 
-        await expect(attachmentFile.read()).rejects.toThrow('Failed to download binary from URL: Not Found');
+        await expect(attachmentFile.read()).rejects.toThrow(
+          'Failed to download binary from URL: Not Found',
+        );
       });
 
       it('should throw error if Binary resource has neither data nor url', async () => {
@@ -509,7 +525,9 @@ describe('MedplumAttachmentManager', () => {
 
         vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
 
-        await expect(attachmentFile.read()).rejects.toThrow('Binary resource has neither data nor url');
+        await expect(attachmentFile.read()).rejects.toThrow(
+          'Binary resource has neither data nor url',
+        );
       });
     });
 
@@ -555,13 +573,17 @@ describe('MedplumAttachmentManager', () => {
 
         vi.spyOn(medplumClient, 'readResource').mockResolvedValue(mockBinary as any);
 
-        await expect(attachmentFile.url()).rejects.toThrow('Binary resource binary-123 does not have a presigned URL');
+        await expect(attachmentFile.url()).rejects.toThrow(
+          'Binary resource binary-123 does not have a presigned URL',
+        );
       });
     });
 
     describe('delete', () => {
       it('should delete Binary resource', async () => {
-        const deleteResourceSpy = vi.spyOn(medplumClient, 'deleteResource').mockResolvedValue({} as any);
+        const deleteResourceSpy = vi
+          .spyOn(medplumClient, 'deleteResource')
+          .mockResolvedValue({} as any);
 
         await attachmentFile.delete();
 

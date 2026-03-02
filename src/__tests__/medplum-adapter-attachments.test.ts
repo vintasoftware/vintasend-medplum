@@ -1,9 +1,12 @@
 import { MockClient } from '@medplum/mock';
-import type { BaseEmailTemplateRenderer } from 'vintasend/dist/services/notification-template-renderers/base-email-template-renderer';
-import type { DatabaseNotification } from 'vintasend/dist/types/notification';
-import type { StoredAttachment, AttachmentFile } from 'vintasend/dist/types/attachment';
-import type { MedplumNotificationBackend } from '../medplum-backend';
+import type {
+  AttachmentFile,
+  BaseEmailTemplateRenderer,
+  DatabaseNotification,
+  StoredAttachment,
+} from 'vintasend';
 import { MedplumNotificationAdapter } from '../medplum-adapter';
+import type { MedplumNotificationBackend } from '../medplum-backend';
 
 /**
  * Tests for MedplumNotificationAdapter attachments support.

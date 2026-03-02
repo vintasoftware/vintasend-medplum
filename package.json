@@ -1,15 +1,17 @@
 {
   "name": "vintasend-medplum",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
+    "prepare": "husky",
+    "lint": "biome check .",
+    "format": "biome check --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "compile-templates": "ts-node src/scripts/compile-pug-templates.ts"
+    "test:coverage": "vitest run --coverage"
   },
   "files": [
     "dist"
@@ -21,15 +23,17 @@
     "@medplum/fhirtypes": "^5.1.1",
     "pdfmake": "^0.2.5",
     "pug": "^3.0.3",
-    "vintasend": "^0.10.0"
+    "vintasend": "^0.11.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.5",
     "@medplum/definitions": "^5.1.1",
     "@medplum/mock": "^5.1.1",
     "@types/node": "^22.0.0",
     "@types/pdfmake": "^0.2.12",
     "@types/pug": "^2.0.10",
     "@vitest/coverage-v8": "4.0.18",
+    "husky": "^9.1.7",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "vitest": "4.0.18",

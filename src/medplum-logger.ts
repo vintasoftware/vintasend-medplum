@@ -1,4 +1,4 @@
-import type { BaseLogger } from 'vintasend/dist/services/loggers/base-logger';
+import type { BaseLogger } from 'vintasend';
 
 export class MedplumLogger implements BaseLogger {
   private logger: typeof console;

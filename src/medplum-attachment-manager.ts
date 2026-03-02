@@ -1,12 +1,12 @@
-import { MedplumClient } from '@medplum/core';
+import type { MedplumClient } from '@medplum/core';
 import type { Binary, Media } from '@medplum/fhirtypes';
-import { BaseAttachmentManager } from 'vintasend/dist/services/attachment-manager/base-attachment-manager';
 import type {
-  AttachmentFileRecord,
   AttachmentFile,
+  AttachmentFileRecord,
   FileAttachment,
   StorageIdentifiers,
-} from 'vintasend/dist/types/attachment';
+} from 'vintasend';
+import { BaseAttachmentManager } from 'vintasend';
 import type { MedplumStorageIdentifiers } from './types';
 
 /**
@@ -77,9 +77,7 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
         },
       ],
       meta: {
-        tag: [
-          { code: 'attachment-file' },
-        ],
+        tag: [{ code: 'attachment-file' }],
       },
     };
 
@@ -99,8 +97,12 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
       size: buffer.length,
       checksum,
       storageIdentifiers,
-      createdAt: createdMedia.meta?.lastUpdated ? new Date(createdMedia.meta.lastUpdated) : new Date(),
-      updatedAt: createdMedia.meta?.lastUpdated ? new Date(createdMedia.meta.lastUpdated) : new Date(),
+      createdAt: createdMedia.meta?.lastUpdated
+        ? new Date(createdMedia.meta.lastUpdated)
+        : new Date(),
+      updatedAt: createdMedia.meta?.lastUpdated
+        ? new Date(createdMedia.meta.lastUpdated)
+        : new Date(),
     };
   }
 
@@ -120,7 +122,7 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
 
       // Extract Binary ID from identifier
       const binaryIdIdentifier = media.identifier?.find(
-        (id) => id.system === 'http://vintasend.com/fhir/binary-id'
+        (id) => id.system === 'http://vintasend.com/fhir/binary-id',
       );
       let binaryId = binaryIdIdentifier?.value;
 
@@ -134,7 +136,7 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
 
       // Extract checksum from identifier
       const checksumIdentifier = media.identifier?.find(
-        (id) => id.system === 'http://vintasend.com/fhir/attachment-checksum'
+        (id) => id.system === 'http://vintasend.com/fhir/attachment-checksum',
       );
       const checksum = checksumIdentifier?.value || '';
 
@@ -221,7 +223,9 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
     }
 
     if (!binaryId) {
-      throw new Error('Storage identifiers must contain medplumBinaryId or a url with Binary reference');
+      throw new Error(
+        'Storage identifiers must contain medplumBinaryId or a url with Binary reference',
+      );
     }
 
     return new MedplumAttachmentFile(this.medplum, binaryId);
@@ -266,7 +270,7 @@ export class MedplumAttachmentFile implements AttachmentFile {
 
       // Unexpected data type from download - fall through to fallback
       throw new Error(`Unexpected data type from Medplum download: ${typeof data}`);
-    } catch (error) {
+    } catch (_error) {
       // Fallback to reading the Binary resource directly if download fails
       const binary = await this.medplum.readResource('Binary', this.binaryId);
 
@@ -314,7 +318,7 @@ export class MedplumAttachmentFile implements AttachmentFile {
    * @param expiresIn - Seconds until the URL expires (not used for Medplum)
    * @returns Presigned URL for file access
    */
-  async url(expiresIn = 3600): Promise<string> {
+  async url(_expiresIn = 3600): Promise<string> {
     // Fetch the Binary resource to get the presigned URL
     const binary = await this.medplum.readResource('Binary', this.binaryId);
 

@@ -1,11 +1,7 @@
+import type { Binary, Communication, Media } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
-import type { Communication, Media, Binary } from '@medplum/fhirtypes';
+import type { AttachmentFile, NotificationAttachment, NotificationType } from 'vintasend';
 import { MedplumNotificationBackend } from '../medplum-backend';
-import type {
-  AttachmentFile,
-  NotificationAttachment,
-} from 'vintasend/dist/types/attachment';
-import type { NotificationType } from 'vintasend/dist/types/notification-type';
 
 type TestContexts = {
   testContext: {
@@ -174,8 +170,6 @@ describe('MedplumNotificationBackend - Attachments', () => {
       ).rejects.toThrow();
     });
 
-
-
     it('should return early if file not found', async () => {
       await backend.deleteAttachmentFile('nonexistent');
 
@@ -257,9 +251,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
 
       const createdCommunication = await medplumClient.createResource(mockCommunication);
 
-      mockAttachmentManager.reconstructAttachmentFile.mockReturnValue(
-        mockAttachmentFileInterface,
-      );
+      mockAttachmentManager.reconstructAttachmentFile.mockReturnValue(mockAttachmentFileInterface);
 
       const result = await backend.getAttachments(createdCommunication.id as string);
 
@@ -306,8 +298,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
           },
         ],
       });
-      const createdCommunication =
-        await clientWithoutManager.createResource(mockCommunication);
+      const createdCommunication = await clientWithoutManager.createResource(mockCommunication);
 
       await expect(
         backendWithoutManager.getAttachments(createdCommunication.id as string),
@@ -336,7 +327,7 @@ describe('MedplumNotificationBackend - Attachments', () => {
         createdCommunication.id as string,
       );
       // Check that no attachments remain (payload might be [] or undefined depending on MockClient behavior)
-      const attachments = updatedCommunication.payload?.filter(p => p.contentAttachment) || [];
+      const attachments = updatedCommunication.payload?.filter((p) => p.contentAttachment) || [];
       expect(attachments).toEqual([]);
     });
 
@@ -523,9 +514,13 @@ describe('MedplumNotificationBackend - Attachments', () => {
         extraParams: null,
         sendAfter: null,
         attachments: [
-          { fileId: existingMedia1.id },  // File reference
-          { file: Buffer.from('new content'), filename: 'new.pdf', contentType: 'application/pdf' },  // New upload
-          { file: Buffer.from('existing content'), filename: 'existing.pdf', contentType: 'application/pdf' },  // Deduped
+          { fileId: existingMedia1.id }, // File reference
+          { file: Buffer.from('new content'), filename: 'new.pdf', contentType: 'application/pdf' }, // New upload
+          {
+            file: Buffer.from('existing content'),
+            filename: 'existing.pdf',
+            contentType: 'application/pdf',
+          }, // Deduped
         ],
       };
 
@@ -613,7 +608,9 @@ describe('MedplumNotificationBackend - Attachments', () => {
       const communication = await medplumClient.readResource('Communication', result.id);
       expect(communication.payload).toBeDefined();
       expect(communication.payload?.length).toBeGreaterThan(1); // body template + attachment
-      expect(communication.payload?.some(p => p.contentAttachment?.contentType === 'application/pdf')).toBe(true);
+      expect(
+        communication.payload?.some((p) => p.contentAttachment?.contentType === 'application/pdf'),
+      ).toBe(true);
     });
 
     it('should create notification with file reference attachments', async () => {
@@ -643,9 +640,9 @@ describe('MedplumNotificationBackend - Attachments', () => {
       // Verify the communication was created with the attachment reference
       const communication = await medplumClient.readResource('Communication', result.id);
       expect(communication.payload).toBeDefined();
-      expect(communication.payload?.some(
-        p => p.contentAttachment?.url?.includes(createdMedia.id)
-      )).toBe(true);
+      expect(
+        communication.payload?.some((p) => p.contentAttachment?.url?.includes(createdMedia.id)),
+      ).toBe(true);
     });
 
     it('should fail when referenced attachment file is missing', async () => {
@@ -764,7 +761,9 @@ describe('MedplumNotificationBackend - Attachments', () => {
       // Verify the communication was created with the attachment
       const communication = await medplumClient.readResource('Communication', result.id);
       expect(communication.payload).toBeDefined();
-      expect(communication.payload?.some(p => p.contentAttachment?.contentType === 'application/pdf')).toBe(true);
+      expect(
+        communication.payload?.some((p) => p.contentAttachment?.contentType === 'application/pdf'),
+      ).toBe(true);
     });
 
     it('should create one-off notification without attachments', async () => {

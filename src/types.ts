@@ -1,4 +1,4 @@
-import type { StorageIdentifiers } from 'vintasend/dist/types/attachment';
+import type { StorageIdentifiers } from 'vintasend';
 
 /**
  * Medplum-specific storage identifiers.

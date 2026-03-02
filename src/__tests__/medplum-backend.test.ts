@@ -1,9 +1,11 @@
-import { MockClient } from '@medplum/mock';
 import type { Communication } from '@medplum/fhirtypes';
+import { MockClient } from '@medplum/mock';
+import type {
+  BaseAttachmentManager,
+  BaseNotificationTypeConfig,
+  NotificationFilter,
+} from 'vintasend';
 import { MedplumNotificationBackend } from '../medplum-backend';
-import type { NotificationFilter } from 'vintasend/dist/services/notification-backends/base-notification-backend';
-import type { BaseAttachmentManager } from 'vintasend/dist/services/attachment-manager/base-attachment-manager';
-import type { BaseNotificationTypeConfig } from 'vintasend/dist/types/notification-type-config';
 
 interface TestConfig extends BaseNotificationTypeConfig {
   ContextMap: {
@@ -32,12 +34,10 @@ describe('MedplumNotificationBackend', () => {
       fileToBuffer: vi.fn(),
     } as unknown as vi.Mocked<BaseAttachmentManager>;
 
-    backend = new MedplumNotificationBackend(
-      medplumClient,
-      {
-        emailNotificationSubjectExtensionUrl: 'http://vintasend.com/fhir/StructureDefinition/email-notification-subject',
-      },
-    );
+    backend = new MedplumNotificationBackend(medplumClient, {
+      emailNotificationSubjectExtensionUrl:
+        'http://vintasend.com/fhir/StructureDefinition/email-notification-subject',
+    });
     backend.injectAttachmentManager(mockAttachmentManager);
   });
 
@@ -58,10 +58,12 @@ describe('MedplumNotificationBackend', () => {
     payload: [
       {
         contentString: '/path/to/template', // bodyTemplate
-        extension: [{
-          url: 'http://vintasend.com/fhir/StructureDefinition/email-notification-subject',
-          valueString: 'Test Subject', // subjectTemplate
-        }],
+        extension: [
+          {
+            url: 'http://vintasend.com/fhir/StructureDefinition/email-notification-subject',
+            valueString: 'Test Subject', // subjectTemplate
+          },
+        ],
       },
     ],
     note: [{ text: JSON.stringify({ param1: 'value1' }) }], // contextParameters
@@ -80,7 +82,7 @@ describe('MedplumNotificationBackend', () => {
       expect(result.length).toBeGreaterThanOrEqual(0);
 
       // If we did find our notification, verify it has the right structure
-      const found = result.find(r => r.id === created.id);
+      const found = result.find((r) => r.id === created.id);
       if (found) {
         expect(found).toMatchObject({
           userId: 'user-123',
@@ -184,7 +186,6 @@ describe('MedplumNotificationBackend', () => {
       };
 
       const createResourceSpy = vi.spyOn(medplumClient, 'createResource');
-      // biome-ignore lint/suspicious/noExplicitAny: testing persisted-field passthrough in backend layer
       const result = await backend.persistNotification(input as any);
 
       expect(createResourceSpy).toHaveBeenCalledWith(
@@ -301,7 +302,7 @@ describe('MedplumNotificationBackend', () => {
       expect(Array.isArray(result)).toBe(true);
 
       // Optionally verify structure if we found the notification
-      const found = result.find(r => r.id === created.id);
+      const found = result.find((r) => r.id === created.id);
       if (found && 'userId' in found) {
         expect(found.userId).toBe('user-123');
       }
@@ -400,7 +401,6 @@ describe('MedplumNotificationBackend', () => {
         };
 
         const createResourceSpy = vi.spyOn(medplumClient, 'createResource');
-        // biome-ignore lint/suspicious/noExplicitAny: testing persisted-field passthrough in backend layer
         const result = await backend.persistOneOffNotification(input as any);
 
         expect(createResourceSpy).toHaveBeenCalledWith(
@@ -565,7 +565,7 @@ describe('MedplumNotificationBackend', () => {
     it('should correctly serialize regular notification', () => {
       const mockCommunication = createMockCommunication({ id: '123' });
 
-      const result = backend['mapToDatabaseNotification'](mockCommunication as any);
+      const result = backend.mapToDatabaseNotification(mockCommunication as any);
 
       expect(result).toMatchObject({
         id: '123',
@@ -595,7 +595,7 @@ describe('MedplumNotificationBackend', () => {
         ],
       });
 
-      const result = backend['mapToDatabaseNotification'](mockCommunication as any);
+      const result = backend.mapToDatabaseNotification(mockCommunication as any);
 
       expect(result).toMatchObject({
         id: '123',
@@ -608,7 +608,7 @@ describe('MedplumNotificationBackend', () => {
 
     it('should handle notification with all required fields', () => {
       const mockCommunication = createMockCommunication({ id: '123' });
-      const result = backend['mapToDatabaseNotification'](mockCommunication as any);
+      const result = backend.mapToDatabaseNotification(mockCommunication as any);
 
       expect(result).toMatchObject({
         id: '123',
@@ -642,8 +642,8 @@ describe('MedplumNotificationBackend', () => {
         ],
       });
 
-      const mappedWithSha = backend['mapToDatabaseNotification'](withGitCommitSha as any);
-      const mappedWithoutSha = backend['mapToDatabaseNotification'](withoutGitCommitSha as any);
+      const mappedWithSha = backend.mapToDatabaseNotification(withGitCommitSha as any);
+      const mappedWithoutSha = backend.mapToDatabaseNotification(withoutGitCommitSha as any);
 
       expect(mappedWithSha.gitCommitSha).toBe('d'.repeat(40));
       expect(mappedWithoutSha.gitCommitSha).toBeNull();
@@ -722,21 +722,12 @@ describe('MedplumNotificationBackend', () => {
         updatedAt: new Date('2026-02-28T12:00:00.000Z'),
       };
 
-      vi.spyOn(backend, 'getNotification').mockResolvedValue(
-        // biome-ignore lint/suspicious/noExplicitAny: test-only cast
-        destinationNewer as any,
-      );
+      vi.spyOn(backend, 'getNotification').mockResolvedValue(destinationNewer as any);
       const persistNotificationUpdateSpy = vi
         .spyOn(backend, 'persistNotificationUpdate')
-        .mockResolvedValue(
-          // biome-ignore lint/suspicious/noExplicitAny: test-only cast
-          destinationNewer as any,
-        );
+        .mockResolvedValue(destinationNewer as any);
 
-      const result = await backend.applyReplicationSnapshotIfNewer(
-        // biome-ignore lint/suspicious/noExplicitAny: test-only cast
-        snapshot as any,
-      );
+      const result = await backend.applyReplicationSnapshotIfNewer(snapshot as any);
 
       expect(result).toEqual({ applied: false });
       expect(persistNotificationUpdateSpy).not.toHaveBeenCalled();
@@ -768,21 +759,12 @@ describe('MedplumNotificationBackend', () => {
         updatedAt: new Date('2026-02-28T09:00:00.000Z'),
       };
 
-      vi.spyOn(backend, 'getNotification').mockResolvedValue(
-        // biome-ignore lint/suspicious/noExplicitAny: test-only cast
-        destinationOlder as any,
-      );
+      vi.spyOn(backend, 'getNotification').mockResolvedValue(destinationOlder as any);
       const persistNotificationUpdateSpy = vi
         .spyOn(backend, 'persistNotificationUpdate')
-        .mockResolvedValue(
-          // biome-ignore lint/suspicious/noExplicitAny: test-only cast
-          snapshot as any,
-        );
+        .mockResolvedValue(snapshot as any);
 
-      const result = await backend.applyReplicationSnapshotIfNewer(
-        // biome-ignore lint/suspicious/noExplicitAny: test-only cast
-        snapshot as any,
-      );
+      const result = await backend.applyReplicationSnapshotIfNewer(snapshot as any);
 
       expect(result).toEqual({ applied: true });
       expect(persistNotificationUpdateSpy).toHaveBeenCalledWith(
@@ -811,11 +793,11 @@ describe('MedplumNotificationBackend', () => {
       const result = await backend.filterNotifications(filter, 1, 25);
 
       expect(searchResourcesSpy).toHaveBeenCalledWith('Communication', [
-        ["sent:ge", "2026-01-01T00:00:00.000Z"],
-        ["sent:le", "2026-01-31T23:59:59.999Z"],
-        ["_count", "25"],
-        ["_offset", "25"],
-        ["_tag", "notification"]
+        ['sent:ge', '2026-01-01T00:00:00.000Z'],
+        ['sent:le', '2026-01-31T23:59:59.999Z'],
+        ['_count', '25'],
+        ['_offset', '25'],
+        ['_tag', 'notification'],
       ]);
       expect(result).toEqual([]);
     });
@@ -919,10 +901,22 @@ describe('MedplumNotificationBackend', () => {
         { orderBy: { field: 'sendAfter', direction: 'desc' } as const, expectedSort: '-sent' },
         { orderBy: { field: 'sentAt', direction: 'asc' } as const, expectedSort: 'sent' },
         { orderBy: { field: 'sentAt', direction: 'desc' } as const, expectedSort: '-sent' },
-        { orderBy: { field: 'createdAt', direction: 'asc' } as const, expectedSort: '_lastUpdated' },
-        { orderBy: { field: 'createdAt', direction: 'desc' } as const, expectedSort: '-_lastUpdated' },
-        { orderBy: { field: 'updatedAt', direction: 'asc' } as const, expectedSort: '_lastUpdated' },
-        { orderBy: { field: 'updatedAt', direction: 'desc' } as const, expectedSort: '-_lastUpdated' },
+        {
+          orderBy: { field: 'createdAt', direction: 'asc' } as const,
+          expectedSort: '_lastUpdated',
+        },
+        {
+          orderBy: { field: 'createdAt', direction: 'desc' } as const,
+          expectedSort: '-_lastUpdated',
+        },
+        {
+          orderBy: { field: 'updatedAt', direction: 'asc' } as const,
+          expectedSort: '_lastUpdated',
+        },
+        {
+          orderBy: { field: 'updatedAt', direction: 'desc' } as const,
+          expectedSort: '-_lastUpdated',
+        },
       ];
 
       for (const testCase of testCases) {

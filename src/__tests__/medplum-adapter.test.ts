@@ -1,8 +1,7 @@
 import { MockClient } from '@medplum/mock';
-import type { BaseEmailTemplateRenderer } from 'vintasend/dist/services/notification-template-renderers/base-email-template-renderer';
-import type { DatabaseNotification } from 'vintasend/dist/types/notification';
-import type { MedplumNotificationBackend } from '../medplum-backend';
+import type { BaseEmailTemplateRenderer, DatabaseNotification } from 'vintasend';
 import { MedplumNotificationAdapter } from '../medplum-adapter';
+import type { MedplumNotificationBackend } from '../medplum-backend';
 
 /**
  * Tests for MedplumNotificationAdapter basic functionality.
@@ -280,7 +279,7 @@ describe('MedplumNotificationAdapter', () => {
     adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
 
-    const longBody = '<p>' + 'a'.repeat(10000) + '</p>';
+    const longBody = `<p>${'a'.repeat(10000)}</p>`;
     mockTemplateRenderer.render.mockResolvedValue({
       subject: 'Test Subject',
       body: longBody,
@@ -324,19 +323,25 @@ describe('MedplumNotificationAdapter', () => {
         id: null,
       } as any;
 
-      await expect(adapter.send(invalidNotification, {})).rejects.toThrow('Notification ID is required');
+      await expect(adapter.send(invalidNotification, {})).rejects.toThrow(
+        'Notification ID is required',
+      );
     });
 
     it('should handle null notification ID', async () => {
       mockNotification.id = null as any;
 
-      await expect(adapter.send(mockNotification, {})).rejects.toThrow('Notification ID is required');
+      await expect(adapter.send(mockNotification, {})).rejects.toThrow(
+        'Notification ID is required',
+      );
     });
 
     it('should handle undefined notification ID', async () => {
       mockNotification.id = undefined as any;
 
-      await expect(adapter.send(mockNotification, {})).rejects.toThrow('Notification ID is required');
+      await expect(adapter.send(mockNotification, {})).rejects.toThrow(
+        'Notification ID is required',
+      );
     });
   });
 });
