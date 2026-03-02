@@ -1,6 +1,6 @@
 {
   "name": "vintasend-medplum",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "",
   "main": "dist/index.js",
   "scripts": {
@@ -12,12 +12,8 @@
     "compile-templates": "ts-node src/scripts/compile-pug-templates.ts"
   },
   "files": [
-    "dist",
-    "src/scripts/compile-pug-templates.ts"
+    "dist"
   ],
-  "bin": {
-    "compile-pug-templates": "dist/scripts/compile-pug-templates.js"
-  },
   "author": "Hugo Bessa",
   "license": "MIT",
   "peerDependencies": {
@@ -25,7 +21,7 @@
     "@medplum/fhirtypes": "^5.1.1",
     "pdfmake": "^0.2.5",
     "pug": "^3.0.3",
-    "vintasend": "^0.9.1"
+    "vintasend": "^0.10.0"
   },
   "devDependencies": {
     "@medplum/definitions": "^5.1.1",
