@@ -23,7 +23,7 @@ import type {
   StoredAttachment,
 } from 'vintasend';
 import { isFieldFilter } from 'vintasend';
-import type { MedplumStorageIdentifiers } from './types';
+import type { MedplumStorageIdentifiers } from './types.js';
 
 type MedplumNotificationBackendOptions = {
   emailNotificationSubjectExtensionUrl?: string;

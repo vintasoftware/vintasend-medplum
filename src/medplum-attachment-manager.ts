@@ -7,7 +7,7 @@ import type {
   StorageIdentifiers,
 } from 'vintasend';
 import { BaseAttachmentManager } from 'vintasend';
-import type { MedplumStorageIdentifiers } from './types';
+import type { MedplumStorageIdentifiers } from './types.js';
 
 /**
  * Medplum AttachmentManager implementation.
