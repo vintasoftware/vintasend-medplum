@@ -1,4 +1,6 @@
 import type { MedplumStorageIdentifiers } from '../src/types';
+import { describe, it, expect } from 'vitest';
+
 
 describe('MedplumStorageIdentifiers', () => {
   it('should extend StorageIdentifiers with Medplum fields', () => {

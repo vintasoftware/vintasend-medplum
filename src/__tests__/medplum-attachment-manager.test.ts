@@ -1,5 +1,6 @@
 import type { Binary, Media } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MedplumAttachmentManager } from '../medplum-attachment-manager';
 
 type MediaWithId = Media & { id: string };

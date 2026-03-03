@@ -5,6 +5,7 @@ import type {
   BaseNotificationTypeConfig,
   NotificationFilter,
 } from 'vintasend';
+import { beforeEach, describe, expect, it, type Mocked, vi } from 'vitest';
 import { MedplumNotificationBackend } from '../medplum-backend';
 
 interface TestConfig extends BaseNotificationTypeConfig {
@@ -19,7 +20,7 @@ interface TestConfig extends BaseNotificationTypeConfig {
 
 describe('MedplumNotificationBackend', () => {
   let medplumClient: MockClient;
-  let mockAttachmentManager: vi.Mocked<BaseAttachmentManager>;
+  let mockAttachmentManager: Mocked<BaseAttachmentManager>;
   let backend: MedplumNotificationBackend<TestConfig>;
 
   beforeEach(() => {
@@ -32,7 +33,7 @@ describe('MedplumNotificationBackend', () => {
       detectContentType: vi.fn(),
       calculateChecksum: vi.fn(),
       fileToBuffer: vi.fn(),
-    } as unknown as vi.Mocked<BaseAttachmentManager>;
+    } as unknown as Mocked<BaseAttachmentManager>;
 
     backend = new MedplumNotificationBackend(medplumClient, {
       emailNotificationSubjectExtensionUrl:
@@ -565,7 +566,8 @@ describe('MedplumNotificationBackend', () => {
     it('should correctly serialize regular notification', () => {
       const mockCommunication = createMockCommunication({ id: '123' });
 
-      const result = backend.mapToDatabaseNotification(mockCommunication as any);
+      // biome-ignore lint/complexity/useLiteralKeys: Testing private method directly for coverage - can ignore complexity here
+      const result = backend['mapToDatabaseNotification'](mockCommunication as any);
 
       expect(result).toMatchObject({
         id: '123',
@@ -595,7 +597,8 @@ describe('MedplumNotificationBackend', () => {
         ],
       });
 
-      const result = backend.mapToDatabaseNotification(mockCommunication as any);
+      // biome-ignore lint/complexity/useLiteralKeys: Testing private method directly for coverage - can ignore complexity here
+      const result = backend['mapToDatabaseNotification'](mockCommunication as any);
 
       expect(result).toMatchObject({
         id: '123',
@@ -608,7 +611,8 @@ describe('MedplumNotificationBackend', () => {
 
     it('should handle notification with all required fields', () => {
       const mockCommunication = createMockCommunication({ id: '123' });
-      const result = backend.mapToDatabaseNotification(mockCommunication as any);
+      // biome-ignore lint/complexity/useLiteralKeys: Testing private method directly for coverage - can ignore complexity here
+      const result = backend['mapToDatabaseNotification'](mockCommunication as any);
 
       expect(result).toMatchObject({
         id: '123',
@@ -642,8 +646,10 @@ describe('MedplumNotificationBackend', () => {
         ],
       });
 
-      const mappedWithSha = backend.mapToDatabaseNotification(withGitCommitSha as any);
-      const mappedWithoutSha = backend.mapToDatabaseNotification(withoutGitCommitSha as any);
+      // biome-ignore lint/complexity/useLiteralKeys: Testing private method directly for coverage - can ignore complexity here
+      const mappedWithSha = backend['mapToDatabaseNotification'](withGitCommitSha as any);
+      // biome-ignore lint/complexity/useLiteralKeys: Testing private method directly for coverage - can ignore complexity here
+      const mappedWithoutSha = backend['mapToDatabaseNotification'](withoutGitCommitSha as any);
 
       expect(mappedWithSha.gitCommitSha).toBe('d'.repeat(40));
       expect(mappedWithoutSha.gitCommitSha).toBeNull();

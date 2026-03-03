@@ -1,16 +1,17 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MedplumLogger } from '../medplum-logger';
 
 describe('MedplumLogger', () => {
   let logger: MedplumLogger;
-  let consoleLogSpy: vi.SpyInstance;
-  let consoleErrorSpy: vi.SpyInstance;
-  let consoleWarnSpy: vi.SpyInstance;
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     logger = new MedplumLogger();
-    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation();
-    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation();
-    consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation();
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {

@@ -1,6 +1,7 @@
 import { indexSearchParameterBundle, indexStructureDefinitionBundle } from '@medplum/core';
 import { readJson, SEARCH_PARAMETER_BUNDLE_FILES } from '@medplum/definitions';
 import type { Bundle, SearchParameter } from '@medplum/fhirtypes';
+import { beforeAll } from 'vitest';
 
 beforeAll(() => {
   indexStructureDefinitionBundle(readJson('fhir/r4/profiles-types.json') as Bundle);

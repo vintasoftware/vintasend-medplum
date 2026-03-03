@@ -1,6 +1,7 @@
 import type { Binary, Communication, Media } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
 import type { AttachmentFile, NotificationAttachment, NotificationType } from 'vintasend';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MedplumNotificationBackend } from '../medplum-backend';
 
 type TestContexts = {

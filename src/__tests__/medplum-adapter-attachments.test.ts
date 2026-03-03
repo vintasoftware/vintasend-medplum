@@ -5,6 +5,7 @@ import type {
   DatabaseNotification,
   StoredAttachment,
 } from 'vintasend';
+import { beforeEach, describe, expect, it, type Mocked, vi } from 'vitest';
 import { MedplumNotificationAdapter } from '../medplum-adapter';
 import type { MedplumNotificationBackend } from '../medplum-backend';
 
@@ -22,8 +23,8 @@ import type { MedplumNotificationBackend } from '../medplum-backend';
  */
 describe('MedplumNotificationAdapter - Attachments', () => {
   let medplumClient: MockClient;
-  let mockTemplateRenderer: vi.Mocked<BaseEmailTemplateRenderer<any>>;
-  let mockBackend: vi.Mocked<MedplumNotificationBackend<any>>;
+  let mockTemplateRenderer: Mocked<BaseEmailTemplateRenderer<any>>;
+  let mockBackend: Mocked<MedplumNotificationBackend<any>>;
   let adapter: MedplumNotificationAdapter<typeof mockTemplateRenderer, any>;
   let mockNotification: DatabaseNotification<any>;
 
@@ -33,11 +34,11 @@ describe('MedplumNotificationAdapter - Attachments', () => {
     mockTemplateRenderer = {
       render: vi.fn(),
       renderFromTemplateContent: vi.fn(),
-    } as vi.Mocked<BaseEmailTemplateRenderer<any>>;
+    } as Mocked<BaseEmailTemplateRenderer<any>>;
 
     mockBackend = {
       getUserEmailFromNotification: vi.fn(),
-    } as unknown as vi.Mocked<MedplumNotificationBackend<any>>;
+    } as unknown as Mocked<MedplumNotificationBackend<any>>;
 
     adapter = new MedplumNotificationAdapter(medplumClient, mockTemplateRenderer, false);
     adapter.injectBackend(mockBackend);
