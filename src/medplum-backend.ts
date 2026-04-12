@@ -103,6 +103,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       'fields.bodyTemplate': true,
       'fields.subjectTemplate': true,
       'fields.contextName': true,
+      'fields.tenant': true,
       'fields.sendAfterRange': true,
       'fields.createdAtRange': true,
       'fields.sentAtRange': true,
@@ -245,6 +246,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       bodyTemplate,
       subjectTemplate: subjectTemplateFromId,
       extraParams: {},
+      tenant: communication.meta?.accounts?.[0]?.reference ?? null,
       status:
         communication.status === 'completed'
           ? 'SENT'
@@ -365,8 +367,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async persistNotification(
     notification: Omit<Notification<Config>, 'id'> & { id?: Config['NotificationIdType'] },
   ): Promise<DatabaseNotification<Config>> {
-    const notificationWithOptionalGitCommitSha = notification as NotificationInput<Config> & {
+    const notificationWithOptionalFields = notification as NotificationInput<Config> & {
       gitCommitSha?: string | null;
+      tenant?: string | null;
     };
 
     // Build base payload with body template
@@ -404,13 +407,15 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         value: notification.subjectTemplate,
       });
     }
-    if (notificationWithOptionalGitCommitSha.gitCommitSha) {
+    if (notificationWithOptionalFields.gitCommitSha) {
       identifiers.push({
         system: IDENTIFIER_SYSTEMS.gitCommitSha,
-        value: notificationWithOptionalGitCommitSha.gitCommitSha,
+        value: notificationWithOptionalFields.gitCommitSha,
       });
     }
-
+    // Assign tenant compartment via meta.accounts. Medplum populates meta.compartment
+    // server-side from this, which AccessPolicies use for multi-tenant access control.
+    // See: https://www.medplum.com/docs/access/multi-tenant-access-policy
     const communication: Communication = {
       resourceType: 'Communication',
       ...(notification.id ? { id: notification.id as string } : {}),
@@ -427,10 +432,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
           { code: notification.contextName as string },
           { code: notification.notificationType as string },
         ],
+        ...(notificationWithOptionalFields.tenant
+          ? { accounts: [{ reference: notificationWithOptionalFields.tenant }] }
+          : {}),
       },
     };
 
     const created = await this.medplum.createResource(communication);
+
     const mappedNotification = this.mapToDatabaseNotification(
       created,
     ) as DatabaseNotification<Config>;
@@ -454,6 +463,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     notification: Partial<Omit<Notification<Config>, 'id'>>,
   ): Promise<DatabaseNotification<Config>> {
     const existing = await this.medplum.readResource('Communication', notificationId as string);
+    this.assertTenantUnchanged(existing, notification, notificationId);
     const status = 'status' in notification ? notification.status : undefined;
     const subjectTemplate =
       'subjectTemplate' in notification ? notification.subjectTemplate : undefined;
@@ -477,6 +487,30 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     const result = await this.medplum.updateResource(updated);
     return this.mapToDatabaseNotification(result) as DatabaseNotification<Config>;
+  }
+
+  /**
+   * Guard against tenant reassignment on update. Changing a Communication's
+   * tenant would move it into a different compartment and could leak data
+   * across tenant boundaries, so we reject any update that tries to change
+   * the tenant. Idempotent updates (same tenant, or no tenant field) are
+   * allowed so service-layer code that spreads the full notification through
+   * replication still works.
+   */
+  private assertTenantUnchanged(
+    existing: Communication,
+    notification: Partial<Record<string, unknown>>,
+    notificationId: Config['NotificationIdType'],
+  ): void {
+    if (!('tenant' in notification)) return;
+    const incoming = (notification.tenant as string | null | undefined) ?? null;
+    const current = existing.meta?.accounts?.[0]?.reference ?? null;
+    if (incoming !== current) {
+      throw new Error(
+        `Cannot update tenant of notification ${String(notificationId)}: ` +
+          `tenant reassignment is not allowed (existing=${current ?? 'null'}, incoming=${incoming ?? 'null'}).`,
+      );
+    }
   }
 
   async applyReplicationSnapshotIfNewer(
@@ -653,19 +687,19 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
           value: notification.subjectTemplate,
         });
       }
-      const notificationWithOptionalGitCommitSha = notification as Omit<
+      const notificationWithOptionalFields = notification as Omit<
         NotificationInput<Config>,
         'id'
       > & {
         gitCommitSha?: string | null;
+        tenant?: string | null;
       };
-      if (notificationWithOptionalGitCommitSha.gitCommitSha) {
+      if (notificationWithOptionalFields.gitCommitSha) {
         bulkIdentifiers.push({
           system: IDENTIFIER_SYSTEMS.gitCommitSha,
-          value: notificationWithOptionalGitCommitSha.gitCommitSha,
+          value: notificationWithOptionalFields.gitCommitSha,
         });
       }
-
       const communication: Communication = {
         resourceType: 'Communication',
         status: 'in-progress',
@@ -696,6 +730,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
             { code: notification.contextName as string },
             { code: notification.notificationType as string },
           ],
+          ...(notificationWithOptionalFields.tenant
+            ? { accounts: [{ reference: notificationWithOptionalFields.tenant }] }
+            : {}),
         },
       };
 
@@ -888,11 +925,12 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       id?: Config['NotificationIdType'];
     },
   ): Promise<DatabaseOneOffNotification<Config>> {
-    const notificationWithOptionalGitCommitSha = notification as Omit<
+    const notificationWithOptionalFields = notification as Omit<
       OneOffNotificationInput<Config>,
       'id'
     > & {
       gitCommitSha?: string | null;
+      tenant?: string | null;
     };
 
     // Build base payload with body template
@@ -930,13 +968,12 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         value: notification.subjectTemplate,
       });
     }
-    if (notificationWithOptionalGitCommitSha.gitCommitSha) {
+    if (notificationWithOptionalFields.gitCommitSha) {
       oneOffIdentifiers.push({
         system: IDENTIFIER_SYSTEMS.gitCommitSha,
-        value: notificationWithOptionalGitCommitSha.gitCommitSha,
+        value: notificationWithOptionalFields.gitCommitSha,
       });
     }
-
     const communication: Communication = {
       resourceType: 'Communication',
       ...(notification.id ? { id: notification.id as string } : {}),
@@ -967,10 +1004,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
           { code: notification.notificationType as string },
           { code: 'one-off' },
         ],
+        ...(notificationWithOptionalFields.tenant
+          ? { accounts: [{ reference: notificationWithOptionalFields.tenant }] }
+          : {}),
       },
     };
 
     const created = await this.medplum.createResource(communication);
+
     const mappedNotification = this.mapToDatabaseNotification(
       created,
     ) as DatabaseOneOffNotification<Config>;
@@ -988,6 +1029,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     notification: Partial<Omit<OneOffNotificationInput<Config>, 'id'>>,
   ): Promise<DatabaseOneOffNotification<Config>> {
     const existing = await this.medplum.readResource('Communication', notificationId as string);
+    this.assertTenantUnchanged(existing, notification, notificationId);
     const status = 'status' in notification ? notification.status : undefined;
     const subjectTemplate =
       'subjectTemplate' in notification ? notification.subjectTemplate : undefined;
@@ -1250,6 +1292,13 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       params.identifier = params.identifier
         ? `${params.identifier},${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`
         : `${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`;
+    }
+
+    // tenant → _compartment search parameter (multi-tenant access via meta.accounts)
+    if (filter.tenant !== undefined) {
+      const tenants: string[] = Array.isArray(filter.tenant) ? filter.tenant : [filter.tenant];
+      // FHIR comma-separated values mean OR; Medplum supports this for _compartment
+      params._compartment = tenants.join(',');
     }
 
     // sendAfterRange → sent date comparators

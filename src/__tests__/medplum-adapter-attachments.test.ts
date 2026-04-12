@@ -53,6 +53,7 @@ describe('MedplumNotificationAdapter - Attachments', () => {
       bodyTemplate: '/path/to/template',
       subjectTemplate: '/path/to/subject',
       extraParams: {},
+      tenant: null,
       contextUsed: null,
       adapterUsed: null,
       gitCommitSha: null,
