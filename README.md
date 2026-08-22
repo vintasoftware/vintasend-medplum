@@ -89,6 +89,10 @@ The implementation maps VintaSend concepts to FHIR resources:
     }]
   }],
   note: [{ text: '{"userId": "123"}' }],  // contextParameters
+  identifier: [
+    { system: "http://vintasend.com/fhir/requested-template-version", value: "3" },
+    { system: "http://vintasend.com/fhir/used-template-version", value: "3" }
+  ],
   meta: {
     tag: [
       { code: "notification" },
@@ -97,6 +101,30 @@ The implementation maps VintaSend concepts to FHIR resources:
     ]
   }
 }
+```
+
+#### Template versions
+
+The two fields VintaSend uses for
+[template version pinning](https://github.com/vintasoftware/vintasend-ts#template-version-pinning)
+are stored as identifiers rather than extensions, so a token search can filter on them exactly the
+way it already does for `bodyTemplate` and `adapterUsed`. Nothing to configure — a notification
+whose renderer does not version templates simply carries neither identifier.
+
+FHIR identifier values are strings, so a version round-trips through `String()` on the way in and
+`parseInt` on the way out; a value that does not parse as an integer reads back as `null` rather
+than as `NaN`.
+
+`requestedTemplateVersion` travels with ordinary create and update writes.
+`usedTemplateVersion` is written only by `storeTemplateVersion`, which the service calls at send
+time, and replaces any value already there rather than accumulating identifiers.
+
+```typescript
+// still pinned to v3
+await service.filterNotifications({ requestedTemplateVersion: 3 }, 0, 20);
+
+// went out on v1 or v2 — the query after finding a bug in an old version
+await service.filterNotifications({ usedTemplateVersion: [1, 2] }, 0, 20);
 ```
 
 #### File Attachments → Binary + Media Resources

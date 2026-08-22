@@ -48,6 +48,11 @@ const IDENTIFIER_SYSTEMS = {
   subjectTemplate: 'http://vintasend.com/fhir/subject-template',
   adapterUsed: 'http://vintasend.com/fhir/adapter-used',
   gitCommitSha: 'http://vintasend.com/fhir/git-commit-sha',
+  // Template versions live in identifiers rather than extensions so `identifier` — a token
+  // search, exact and repeatable — can filter on them the way it already does for the fields
+  // above. Stored as decimal strings and parsed back on read.
+  requestedTemplateVersion: 'http://vintasend.com/fhir/requested-template-version',
+  usedTemplateVersion: 'http://vintasend.com/fhir/used-template-version',
 } as const;
 
 export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfig>
@@ -119,7 +124,29 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       'orderBy.readAt': false,
       'orderBy.createdAt': true,
       'orderBy.updatedAt': true,
+      // Both are identifier-backed, so a token search finds them exactly, and `identifier:not`
+      // negates them — the same shape as adapterUsed and the template fields above.
+      'fields.requestedTemplateVersion': true,
+      'fields.usedTemplateVersion': true,
+      'negation.requestedTemplateVersion': true,
+      'negation.usedTemplateVersion': true,
     };
+  }
+
+  /**
+   * Read a template version back off an identifier.
+   *
+   * Stored as a decimal string because a FHIR identifier's value is a string. Anything that does
+   * not parse as an integer is read as absent rather than as `NaN`: an identifier written by
+   * something other than this backend is not worth propagating as a broken number.
+   */
+  private readTemplateVersion(communication: Communication, system: string): number | null {
+    const raw = communication.identifier?.find((identifier) => identifier.system === system)?.value;
+    if (raw === undefined) {
+      return null;
+    }
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isInteger(parsed) ? parsed : null;
   }
 
   private isDuplicateReplicationConflict(error: unknown): boolean {
@@ -234,6 +261,15 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       communication.identifier?.find((id) => id.system === IDENTIFIER_SYSTEMS.gitCommitSha)
         ?.value || null;
 
+    const requestedTemplateVersion = this.readTemplateVersion(
+      communication,
+      IDENTIFIER_SYSTEMS.requestedTemplateVersion,
+    );
+    const usedTemplateVersion = this.readTemplateVersion(
+      communication,
+      IDENTIFIER_SYSTEMS.usedTemplateVersion,
+    );
+
     const baseNotification = {
       id: notificationId,
       // biome-ignore lint/suspicious/noExplicitAny: notificationType is dynamic based on FHIR tags --- IGNORE ---
@@ -256,6 +292,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       contextUsed,
       adapterUsed,
       gitCommitSha,
+      requestedTemplateVersion,
+      usedTemplateVersion,
       sentAt:
         communication.status === 'completed' ? new Date(communication.sent || new Date()) : null,
       readAt: null,
@@ -369,6 +407,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   ): Promise<DatabaseNotification<Config>> {
     const notificationWithOptionalFields = notification as NotificationInput<Config> & {
       gitCommitSha?: string | null;
+      requestedTemplateVersion?: number | null;
       tenant?: string | null;
     };
 
@@ -411,6 +450,15 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       identifiers.push({
         system: IDENTIFIER_SYSTEMS.gitCommitSha,
         value: notificationWithOptionalFields.gitCommitSha,
+      });
+    }
+    if (
+      notificationWithOptionalFields.requestedTemplateVersion !== null &&
+      notificationWithOptionalFields.requestedTemplateVersion !== undefined
+    ) {
+      identifiers.push({
+        system: IDENTIFIER_SYSTEMS.requestedTemplateVersion,
+        value: String(notificationWithOptionalFields.requestedTemplateVersion),
       });
     }
     // Assign tenant compartment via meta.accounts. Medplum populates meta.compartment
@@ -615,6 +663,16 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     upsert(IDENTIFIER_SYSTEMS.adapterUsed, notification.adapterUsed as string | null | undefined);
     upsert(IDENTIFIER_SYSTEMS.gitCommitSha, notification.gitCommitSha as string | null | undefined);
 
+    const requestedVersion = (notification as { requestedTemplateVersion?: number | null })
+      .requestedTemplateVersion;
+    upsert(
+      IDENTIFIER_SYSTEMS.requestedTemplateVersion,
+      requestedVersion === undefined || requestedVersion === null
+        ? requestedVersion
+        : String(requestedVersion),
+    );
+    // usedTemplateVersion is deliberately absent: it is written only by storeTemplateVersion.
+
     return updated;
   }
 
@@ -692,12 +750,22 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         'id'
       > & {
         gitCommitSha?: string | null;
+        requestedTemplateVersion?: number | null;
         tenant?: string | null;
       };
       if (notificationWithOptionalFields.gitCommitSha) {
         bulkIdentifiers.push({
           system: IDENTIFIER_SYSTEMS.gitCommitSha,
           value: notificationWithOptionalFields.gitCommitSha,
+        });
+      }
+      if (
+        notificationWithOptionalFields.requestedTemplateVersion !== null &&
+        notificationWithOptionalFields.requestedTemplateVersion !== undefined
+      ) {
+        bulkIdentifiers.push({
+          system: IDENTIFIER_SYSTEMS.requestedTemplateVersion,
+          value: String(notificationWithOptionalFields.requestedTemplateVersion),
         });
       }
       const communication: Communication = {
@@ -886,6 +954,33 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     }
   }
 
+  /**
+   * Record which version of the template actually rendered this notification.
+   *
+   * Written as an identifier so the `usedTemplateVersion` filter can find it, replacing any value
+   * already there — the service only calls this when the version differs from what is stored.
+   */
+  async storeTemplateVersion(
+    notificationId: Config['NotificationIdType'],
+    templateVersion: number,
+  ): Promise<void> {
+    const existing = await this.medplum.readResource('Communication', notificationId as string);
+    const identifiers = (existing.identifier ?? []).filter(
+      (identifier) => identifier.system !== IDENTIFIER_SYSTEMS.usedTemplateVersion,
+    );
+
+    await this.medplum.updateResource({
+      ...existing,
+      identifier: [
+        ...identifiers,
+        {
+          system: IDENTIFIER_SYSTEMS.usedTemplateVersion,
+          value: String(templateVersion),
+        },
+      ],
+    });
+  }
+
   async storeAdapterAndContextUsed(
     notificationId: Config['NotificationIdType'],
     adapterKey: string,
@@ -930,6 +1025,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       'id'
     > & {
       gitCommitSha?: string | null;
+      requestedTemplateVersion?: number | null;
       tenant?: string | null;
     };
 
@@ -972,6 +1068,15 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       oneOffIdentifiers.push({
         system: IDENTIFIER_SYSTEMS.gitCommitSha,
         value: notificationWithOptionalFields.gitCommitSha,
+      });
+    }
+    if (
+      notificationWithOptionalFields.requestedTemplateVersion !== null &&
+      notificationWithOptionalFields.requestedTemplateVersion !== undefined
+    ) {
+      oneOffIdentifiers.push({
+        system: IDENTIFIER_SYSTEMS.requestedTemplateVersion,
+        value: String(notificationWithOptionalFields.requestedTemplateVersion),
       });
     }
     const communication: Communication = {
@@ -1292,6 +1397,36 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       params.identifier = params.identifier
         ? `${params.identifier},${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`
         : `${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`;
+    }
+
+    // requestedTemplateVersion / usedTemplateVersion → identifier search with system.
+    // Comma-separated values are OR, which is exactly what a list of versions means. They join
+    // the same `identifier` parameter as the fields above; FHIR reads several values in one
+    // parameter as OR, so naming two different fields there at once would ask for the wrong
+    // thing — but the service never builds such a filter as a single leaf, and an AND group
+    // reaches `mergeAndFilters`, which refuses a conflict rather than silently widening.
+    const appendIdentifier = (value: string): void => {
+      params.identifier = params.identifier ? `${params.identifier},${value}` : value;
+    };
+
+    if (filter.requestedTemplateVersion !== undefined) {
+      const versions = Array.isArray(filter.requestedTemplateVersion)
+        ? filter.requestedTemplateVersion
+        : [filter.requestedTemplateVersion];
+      appendIdentifier(
+        versions
+          .map((version) => `${IDENTIFIER_SYSTEMS.requestedTemplateVersion}|${version}`)
+          .join(','),
+      );
+    }
+
+    if (filter.usedTemplateVersion !== undefined) {
+      const versions = Array.isArray(filter.usedTemplateVersion)
+        ? filter.usedTemplateVersion
+        : [filter.usedTemplateVersion];
+      appendIdentifier(
+        versions.map((version) => `${IDENTIFIER_SYSTEMS.usedTemplateVersion}|${version}`).join(','),
+      );
     }
 
     // tenant → _compartment search parameter (multi-tenant access via meta.accounts)

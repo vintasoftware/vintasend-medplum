@@ -3,6 +3,7 @@ import type {
   AnyDatabaseNotification,
   BaseEmailTemplateRenderer,
   BaseNotificationTypeConfig,
+  EmailTemplate,
   JsonObject,
   StoredAttachment,
 } from 'vintasend';
@@ -27,7 +28,14 @@ export class MedplumNotificationAdapter<
     return true;
   }
 
-  async send(notification: AnyDatabaseNotification<Config>, context: JsonObject): Promise<void> {
+  /**
+   * Returns what the renderer produced so the service can record which template version rendered
+   * this notification. Nothing else reads it — the email is already sent by then.
+   */
+  async send(
+    notification: AnyDatabaseNotification<Config>,
+    context: JsonObject,
+  ): Promise<EmailTemplate> {
     if (!this.backend) {
       throw new Error('Backend not injected');
     }
@@ -72,6 +80,8 @@ export class MedplumNotificationAdapter<
     }
 
     await this.medplum.sendEmail(emailOptions);
+
+    return template;
   }
 
   protected async prepareAttachments(attachments: StoredAttachment[]): Promise<
