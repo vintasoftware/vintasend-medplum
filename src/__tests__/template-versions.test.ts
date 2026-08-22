@@ -196,3 +196,120 @@ describe('filtering', () => {
     expect(capabilities['fields.usedTemplateVersion']).toBe(true);
   });
 });
+
+describe('negating a version filter', () => {
+  it('excludes a requested version instead of throwing', async () => {
+    // Declared `negation.requestedTemplateVersion: true`, so it has to actually negate. It used
+    // to fall through `negateFilter` to the "no supported negatable field" throw.
+    const pinned = await backend.persistNotification({ ...input, requestedTemplateVersion: 3 });
+    await backend.persistNotification({ ...input, requestedTemplateVersion: 4 });
+
+    const others = await backend.filterNotifications({ not: { requestedTemplateVersion: 3 } }, 0, 10);
+
+    expect(others.map((n) => n.requestedTemplateVersion)).toEqual([4]);
+    expect(others.map((n) => n.id)).not.toContain(pinned.id);
+  });
+
+  it('excludes a used version', async () => {
+    const one = await backend.persistNotification(input);
+    const two = await backend.persistNotification(input);
+    await backend.storeTemplateVersion(one.id, 2);
+    await backend.storeTemplateVersion(two.id, 5);
+
+    const others = await backend.filterNotifications({ not: { usedTemplateVersion: 2 } }, 0, 10);
+
+    expect(others.map((n) => n.usedTemplateVersion)).toEqual([5]);
+  });
+
+  it('excludes every version in a list', async () => {
+    await backend.persistNotification({ ...input, requestedTemplateVersion: 1 });
+    await backend.persistNotification({ ...input, requestedTemplateVersion: 2 });
+    await backend.persistNotification({ ...input, requestedTemplateVersion: 3 });
+
+    const others = await backend.filterNotifications(
+      { not: { requestedTemplateVersion: [1, 2] } },
+      0,
+      10,
+    );
+
+    expect(others.map((n) => n.requestedTemplateVersion)).toEqual([3]);
+  });
+
+  it('negates version 0 rather than treating it as absent', async () => {
+    await backend.persistNotification({ ...input, requestedTemplateVersion: 0 });
+    await backend.persistNotification({ ...input, requestedTemplateVersion: 1 });
+
+    const others = await backend.filterNotifications({ not: { requestedTemplateVersion: 0 } }, 0, 10);
+
+    expect(others.map((n) => n.requestedTemplateVersion)).toEqual([1]);
+  });
+});
+
+describe('the capability report matches the behaviour', () => {
+  /** A filter value that makes sense for each field the report can claim. */
+  const SAMPLE: Record<string, unknown> = {
+    status: 'SENT',
+    notificationType: 'EMAIL',
+    adapterUsed: 'medplum',
+    userId: 'Patient/user-1',
+    bodyTemplate: 'welcome',
+    subjectTemplate: 'subject',
+    contextName: 'testContext',
+    tenant: 'Organization/t1',
+    requestedTemplateVersion: 3,
+    usedTemplateVersion: 3,
+    sendAfterRange: { from: new Date('2026-01-01'), to: new Date('2026-12-31') },
+    createdAtRange: { from: new Date('2026-01-01'), to: new Date('2026-12-31') },
+    sentAtRange: { from: new Date('2026-01-01'), to: new Date('2026-12-31') },
+    readAtRange: { from: new Date('2026-01-01'), to: new Date('2026-12-31') },
+  };
+
+  async function attempt(filter: Record<string, unknown>): Promise<string | null> {
+    try {
+      await backend.filterNotifications(filter as never, 0, 10);
+      return null;
+    } catch (error) {
+      return (error as Error).message;
+    }
+  }
+
+  it('honours every field it declares filterable', async () => {
+    const capabilities = backend.getFilterCapabilities() as Record<string, boolean>;
+    const broken: string[] = [];
+
+    for (const [key, declared] of Object.entries(capabilities)) {
+      if (!declared || !key.startsWith('fields.')) continue;
+      const field = key.slice('fields.'.length);
+      const sample = SAMPLE[field];
+      if (sample === undefined) continue;
+      const failure = await attempt({ [field]: sample });
+      if (failure !== null) broken.push(`${key}: ${failure}`);
+    }
+
+    expect(broken).toEqual([]);
+  });
+
+  it('honours every negation it declares', async () => {
+    // The guard that would have caught the version fields: a `negation.*: true` that throws is a
+    // caller reading the report, sending the filter, and getting an exception.
+    const capabilities = backend.getFilterCapabilities() as Record<string, boolean>;
+    const broken: string[] = [];
+
+    for (const [key, declared] of Object.entries(capabilities)) {
+      if (!declared || !key.startsWith('negation.')) continue;
+      const field = key.slice('negation.'.length);
+      const sample = SAMPLE[field];
+      if (sample === undefined) continue;
+      const failure = await attempt({ not: { [field]: sample } });
+      if (failure !== null) broken.push(`${key}: ${failure}`);
+    }
+
+    expect(broken).toEqual([]);
+  });
+
+  it('really does refuse what it declares unsupported', async () => {
+    // The other direction, so the sweep above cannot pass by declaring everything false.
+    expect(backend.getFilterCapabilities()['negation.sentAtRange']).toBe(false);
+    expect(await attempt({ not: { sentAtRange: SAMPLE.sentAtRange } })).toMatch(/sentAtRange/);
+  });
+});
