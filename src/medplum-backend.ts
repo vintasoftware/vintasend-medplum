@@ -1471,7 +1471,11 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   /**
    * Negate a simple field filter using the FHIR `:not` modifier.
-   * Only supports `status`, `notificationType`, and `userId`.
+   *
+   * Supports every field the capability map reports `negation.*` for: `status`,
+   * `notificationType`, `contextName`, `userId`, `adapterUsed`, `bodyTemplate`,
+   * `subjectTemplate` and the two template versions. The date ranges throw, and the map
+   * declares them false to match.
    */
   private negateFilter(inner: NotificationFilter<Config>): Record<string, string> {
     if (!isFieldFilter(inner)) {
@@ -1541,6 +1545,35 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         : `${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`;
     }
 
+    // The template versions negate the same way `adapterUsed` does: both are identifier-backed,
+    // so `identifier:not` excludes them exactly. Comma-separated values inside one `:not` mean
+    // "none of these", which is what negating a list of versions asks for.
+    const appendNegatedIdentifier = (value: string): void => {
+      params['identifier:not'] = params['identifier:not']
+        ? `${params['identifier:not']},${value}`
+        : value;
+    };
+
+    if (filter.requestedTemplateVersion !== undefined) {
+      const versions = Array.isArray(filter.requestedTemplateVersion)
+        ? filter.requestedTemplateVersion
+        : [filter.requestedTemplateVersion];
+      appendNegatedIdentifier(
+        versions
+          .map((version) => `${IDENTIFIER_SYSTEMS.requestedTemplateVersion}|${version}`)
+          .join(','),
+      );
+    }
+
+    if (filter.usedTemplateVersion !== undefined) {
+      const versions = Array.isArray(filter.usedTemplateVersion)
+        ? filter.usedTemplateVersion
+        : [filter.usedTemplateVersion];
+      appendNegatedIdentifier(
+        versions.map((version) => `${IDENTIFIER_SYSTEMS.usedTemplateVersion}|${version}`).join(','),
+      );
+    }
+
     if (filter.sentAtRange) {
       throw new Error('NOT filter on sentAtRange is not supported by MedplumNotificationBackend.');
     }
@@ -1557,7 +1590,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     if (Object.keys(params).length === 0) {
       throw new Error(
-        'NOT filter must contain at least one supported negatable field (status, notificationType, contextName, userId, adapterUsed, bodyTemplate, subjectTemplate).',
+        'NOT filter must contain at least one supported negatable field (status, notificationType, contextName, userId, adapterUsed, bodyTemplate, subjectTemplate, requestedTemplateVersion, usedTemplateVersion).',
       );
     }
 
