@@ -2033,7 +2033,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
           `[MedplumBackend.getAttachments] Payload item: ${JSON.stringify(payload, null, 2)}`,
         );
         const attachment = payload.contentAttachment;
-        if (!attachment || !attachment.url) continue;
+        if (!attachment?.url) continue;
 
         this.logger?.info(
           `[MedplumBackend.getAttachments] Found attachment URL: ${attachment.url}`,

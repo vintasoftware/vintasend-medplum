@@ -204,7 +204,11 @@ describe('negating a version filter', () => {
     const pinned = await backend.persistNotification({ ...input, requestedTemplateVersion: 3 });
     await backend.persistNotification({ ...input, requestedTemplateVersion: 4 });
 
-    const others = await backend.filterNotifications({ not: { requestedTemplateVersion: 3 } }, 0, 10);
+    const others = await backend.filterNotifications(
+      { not: { requestedTemplateVersion: 3 } },
+      0,
+      10,
+    );
 
     expect(others.map((n) => n.requestedTemplateVersion)).toEqual([4]);
     expect(others.map((n) => n.id)).not.toContain(pinned.id);
@@ -239,7 +243,11 @@ describe('negating a version filter', () => {
     await backend.persistNotification({ ...input, requestedTemplateVersion: 0 });
     await backend.persistNotification({ ...input, requestedTemplateVersion: 1 });
 
-    const others = await backend.filterNotifications({ not: { requestedTemplateVersion: 0 } }, 0, 10);
+    const others = await backend.filterNotifications(
+      { not: { requestedTemplateVersion: 0 } },
+      0,
+      10,
+    );
 
     expect(others.map((n) => n.requestedTemplateVersion)).toEqual([1]);
   });
