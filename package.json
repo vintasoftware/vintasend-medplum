@@ -1,6 +1,6 @@
 {
   "name": "vintasend-medplum",
-  "version": "0.14.1",
+  "version": "1.0.0-alpha1",
   "description": "",
   "type": "module",
   "main": "dist/index.js",
@@ -24,10 +24,10 @@
     "@medplum/fhirtypes": "^5.1.1",
     "pdfmake": "^0.2.5",
     "pug": "^3.0.3",
-    "vintasend": "^0.14.1"
+    "vintasend": "^1.0.0-alpha1"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.5",
+    "@biomejs/biome": "^2.5.10",
     "@medplum/definitions": "^5.1.1",
     "@medplum/mock": "^5.1.1",
     "@types/node": "^22.0.0",
@@ -38,6 +38,6 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "vitest": "4.0.18",
-    "vintasend": "^0.14.1"
+    "vintasend": "^1.0.0-alpha1"
   }
 }
