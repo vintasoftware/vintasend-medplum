@@ -1,3 +1,4 @@
+import { notFound, OperationOutcomeError } from '@medplum/core';
 import type { Communication } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
 import type {
@@ -5,8 +6,10 @@ import type {
   BaseNotificationTypeConfig,
   NotificationFilter,
 } from 'vintasend';
+import { logMessageMatching, renderLogMessage } from 'vintasend';
 import { beforeEach, describe, expect, it, type Mocked, vi } from 'vitest';
 import { MedplumNotificationBackend } from '../medplum-backend';
+import { MedplumLogger } from '../medplum-logger';
 
 interface TestConfig extends BaseNotificationTypeConfig {
   ContextMap: {
@@ -284,10 +287,123 @@ describe('MedplumNotificationBackend', () => {
   });
 
   describe('getUserEmailFromNotification', () => {
-    it('should return user email for notification', async () => {
-      // This method delegates to userService.getUserEmailById which is not in the backend
-      // Skip this test as it requires integration with user service
-      expect(true).toBe(true);
+    const createLogger = () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() });
+
+    it('should return the recipient email', async () => {
+      const patient = await medplumClient.createResource({
+        resourceType: 'Patient',
+        telecom: [{ system: 'email', value: 'synthetic.patient@example.com' }],
+      });
+      const communication = await medplumClient.createResource(
+        createMockCommunication({ recipient: [{ reference: `Patient/${patient.id}` }] }),
+      );
+
+      const email = await backend.getUserEmailFromNotification(communication.id as string);
+
+      expect(email).toBe('synthetic.patient@example.com');
+    });
+
+    it('should log a failing read through the injected logger without the error message', async () => {
+      const logger = createLogger();
+      backend.injectLogger(logger);
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const diagnostics = 'Patient/synthetic-123 Jane Synthetic DOB 1970-01-01';
+      vi.spyOn(medplumClient, 'readResource').mockImplementation(async (resourceType) => {
+        if (resourceType === 'Communication') {
+          return createMockCommunication({
+            id: 'comm-123',
+            recipient: [{ reference: 'Patient/synthetic-123' }],
+          }) as any;
+        }
+        throw new OperationOutcomeError({
+          ...notFound,
+          issue: [
+            { severity: 'error', code: 'not-found', details: { text: diagnostics }, diagnostics },
+          ],
+        });
+      });
+
+      const email = await backend.getUserEmailFromNotification('comm-123');
+
+      expect(email).toBeUndefined();
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      const line = renderLogMessage(logger.error.mock.calls[0][0]);
+      expect(line).toContain('comm-123');
+      expect(line).toContain('OperationOutcomeError (status 404)');
+      expect(line).not.toContain('Jane Synthetic');
+      expect(line).not.toContain('synthetic-123');
+      expect(logger.error.mock.calls[0]).toHaveLength(1);
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('should warn through the injected logger when the recipient reference has no id', async () => {
+      const logger = createLogger();
+      backend.injectLogger(logger);
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(medplumClient, 'readResource').mockResolvedValue(
+        createMockCommunication({ id: 'comm-456', recipient: [{ reference: 'Patient/' }] }) as any,
+      );
+
+      const email = await backend.getUserEmailFromNotification('comm-456');
+
+      expect(email).toBeUndefined();
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        logMessageMatching(expect.stringContaining('comm-456')),
+      );
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('should keep the error message out of process output when MedplumLogger is injected', async () => {
+      backend.injectLogger(new MedplumLogger());
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const diagnostics = 'Patient/synthetic-789 Jane Synthetic DOB 1970-01-01';
+      vi.spyOn(medplumClient, 'readResource').mockImplementation(async (resourceType) => {
+        if (resourceType === 'Communication') {
+          return createMockCommunication({
+            id: 'comm-789',
+            recipient: [{ reference: 'Patient/synthetic-789' }],
+          }) as any;
+        }
+        throw new OperationOutcomeError({
+          ...notFound,
+          issue: [
+            { severity: 'error', code: 'not-found', details: { text: diagnostics }, diagnostics },
+          ],
+        });
+      });
+
+      await backend.getUserEmailFromNotification('comm-789');
+
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy.mock.calls[0]).toHaveLength(1);
+      const [output] = consoleErrorSpy.mock.calls[0];
+      expect(output).toContain('comm-789');
+      expect(output).not.toContain('Jane Synthetic');
+      expect(output).not.toContain('synthetic-789');
+      consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe('injectLogger', () => {
+    it('should forward the logger to an attachment manager that accepts one, in either order', () => {
+      const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const loggerAwareManager = {
+        ...mockAttachmentManager,
+        injectLogger: vi.fn(),
+      } as unknown as BaseAttachmentManager & { injectLogger: ReturnType<typeof vi.fn> };
+
+      const managerFirst = new MedplumNotificationBackend<TestConfig>(medplumClient);
+      managerFirst.injectAttachmentManager(loggerAwareManager);
+      managerFirst.injectLogger(logger);
+      expect(loggerAwareManager.injectLogger).toHaveBeenLastCalledWith(logger);
+
+      loggerAwareManager.injectLogger.mockClear();
+      const loggerFirst = new MedplumNotificationBackend<TestConfig>(medplumClient);
+      loggerFirst.injectLogger(logger);
+      loggerFirst.injectAttachmentManager(loggerAwareManager);
+      expect(loggerAwareManager.injectLogger).toHaveBeenLastCalledWith(logger);
     });
   });
 

@@ -22,7 +22,8 @@ import type {
   OneOffNotificationInput,
   StoredAttachment,
 } from 'vintasend';
-import { isFieldFilter } from 'vintasend';
+import { isFieldFilter, log, logCount, logId, logIds } from 'vintasend';
+import { logMedplumError } from './log-medplum-error.js';
 import type { MedplumStorageIdentifiers } from './types.js';
 
 type MedplumNotificationBackendOptions = {
@@ -82,6 +83,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    */
   injectAttachmentManager(manager: BaseAttachmentManager): void {
     this.attachmentManager = manager;
+    this.forwardLoggerToAttachmentManager();
   }
 
   /**
@@ -89,6 +91,20 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    */
   injectLogger(logger: BaseLogger): void {
     this.logger = logger;
+    this.forwardLoggerToAttachmentManager();
+  }
+
+  /**
+   * VintaSend does not inject a logger into the attachment manager, so the backend hands over the
+   * one it was given. Works in either injection order.
+   */
+  private forwardLoggerToAttachmentManager(): void {
+    const manager = this.attachmentManager as
+      | (BaseAttachmentManager & { injectLogger?: (logger: BaseLogger) => void })
+      | undefined;
+    if (this.logger && typeof manager?.injectLogger === 'function') {
+      manager.injectLogger(this.logger);
+    }
   }
 
   /**
@@ -495,11 +511,11 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     // Load and attach attachments to the returned notification if they were provided
     if (notification.attachments && notification.attachments.length > 0) {
       this.logger?.info(
-        `[MedplumBackend] Loading ${notification.attachments.length} attachments for notification ${mappedNotification.id}`,
+        log`[MedplumBackend] Loading ${logCount(notification.attachments.length)} attachments for notification ${logId(mappedNotification.id)}`,
       );
       mappedNotification.attachments = await this.getAttachments(mappedNotification.id);
       this.logger?.info(
-        `[MedplumBackend] Loaded ${mappedNotification.attachments?.length || 0} attachments for notification ${mappedNotification.id}`,
+        log`[MedplumBackend] Loaded ${logCount(mappedNotification.attachments?.length ?? 0)} attachments for notification ${logId(mappedNotification.id)}`,
       );
     }
 
@@ -940,16 +956,18 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       const [resourceType, id] = practitionerRef.split('/') as ['Patient' | 'Practitioner', string];
 
       if (!id) {
-        // eslint-disable-next-line no-console
-        console.error('[getUserEmailFromNotification] Invalid reference format - no ID found');
+        this.logger?.warn(
+          log`[MedplumBackend.getUserEmailFromNotification] Recipient reference has no id for notification ${logId(notificationId)}`,
+        );
         return undefined;
       }
 
       const resource = await this.medplum.readResource(resourceType, id);
       return resource.telecom?.find((t) => t.system === 'email')?.value;
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('[getUserEmailFromNotification] Error fetching user email:', error);
+      this.logger?.error(
+        log`[MedplumBackend.getUserEmailFromNotification] Failed to fetch recipient email for notification ${logId(notificationId)}: ${logMedplumError(error)}`,
+      );
       return undefined;
     }
   }
@@ -2018,10 +2036,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       const attachments: StoredAttachment[] = [];
 
       this.logger?.info(
-        `[MedplumBackend.getAttachments] Fetching attachments for notification ${notificationId}`,
+        log`[MedplumBackend.getAttachments] Fetching attachments for notification ${logId(notificationId)}`,
       );
       this.logger?.info(
-        `[MedplumBackend.getAttachments] Communication has ${communication.payload?.length || 0} payload items`,
+        log`[MedplumBackend.getAttachments] Communication has ${logCount(communication.payload?.length ?? 0)} payload items`,
       );
 
       // Extract all Media IDs from payload
@@ -2029,14 +2047,11 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       const payloadMap = new Map<string, { description?: string }>();
 
       for (const payload of communication.payload || []) {
-        this.logger?.info(
-          `[MedplumBackend.getAttachments] Payload item: ${JSON.stringify(payload, null, 2)}`,
-        );
         const attachment = payload.contentAttachment;
         if (!attachment?.url) continue;
 
         this.logger?.info(
-          `[MedplumBackend.getAttachments] Found attachment URL: ${attachment.url}`,
+          log`[MedplumBackend.getAttachments] Found attachment URL: ${logId(attachment.url)}`,
         );
 
         // Extract Media ID from URL
@@ -2044,38 +2059,42 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         if (!match) continue;
 
         const mediaId = match[1];
-        this.logger?.info(`[MedplumBackend.getAttachments] Extracted Media ID: ${mediaId}`);
+        this.logger?.info(
+          log`[MedplumBackend.getAttachments] Extracted Media ID: ${logId(mediaId)}`,
+        );
         mediaIds.push(mediaId);
         payloadMap.set(mediaId, { description: attachment.title });
       }
 
       this.logger?.info(
-        `[MedplumBackend.getAttachments] Found ${mediaIds.length} media IDs: ${mediaIds.join(', ')}`,
+        log`[MedplumBackend.getAttachments] Found ${logCount(mediaIds.length)} media IDs: ${logIds(mediaIds)}`,
       );
 
       // Fetch all Media resources in a single query
       if (mediaIds.length === 0) {
         this.logger?.info(
-          `[MedplumBackend.getAttachments] No media IDs found, returning empty array`,
+          log`[MedplumBackend.getAttachments] No media IDs found, returning empty array`,
         );
         return [];
       }
 
       this.logger?.info(
-        `[MedplumBackend.getAttachments] Searching for Media resources with _id: ${mediaIds.join(',')}`,
+        log`[MedplumBackend.getAttachments] Searching for Media resources with _id: ${logIds(mediaIds)}`,
       );
       const mediaResources = await this.medplum.searchResources('Media', {
         _id: mediaIds.join(','),
       });
       this.logger?.info(
-        `[MedplumBackend.getAttachments] Search returned ${mediaResources.length} Media resources`,
+        log`[MedplumBackend.getAttachments] Search returned ${logCount(mediaResources.length)} Media resources`,
       );
 
       // Build attachments from the fetched Media resources
       for (const media of mediaResources) {
         if (!media.id) continue;
 
-        this.logger?.info(`[MedplumBackend.getAttachments] Processing Media resource ${media.id}`);
+        this.logger?.info(
+          log`[MedplumBackend.getAttachments] Processing Media resource ${logId(media.id)}`,
+        );
         const fileRecord = await this.mediaToAttachmentFileRecord(media);
         if (!fileRecord) continue;
 
@@ -2094,15 +2113,19 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
           description: payloadData?.description,
           storageMetadata: fileRecord.storageIdentifiers,
         });
-        this.logger?.info(`[MedplumBackend.getAttachments] Added attachment ${media.id} to list`);
+        this.logger?.info(
+          log`[MedplumBackend.getAttachments] Added attachment ${logId(media.id)} to list`,
+        );
       }
 
       this.logger?.info(
-        `[MedplumBackend.getAttachments] Returning ${attachments.length} attachments`,
+        log`[MedplumBackend.getAttachments] Returning ${logCount(attachments.length)} attachments`,
       );
       return attachments;
     } catch (error) {
-      this.logger?.info(`[MedplumBackend.getAttachments] Error fetching attachments: ${error}`);
+      this.logger?.error(
+        log`[MedplumBackend.getAttachments] Failed to fetch attachments for notification ${logId(notificationId)}: ${logMedplumError(error)}`,
+      );
       return [];
     }
   }

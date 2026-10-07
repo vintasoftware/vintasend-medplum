@@ -1,6 +1,7 @@
 import type { Binary, Communication, Media } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
 import type { AttachmentFile, NotificationAttachment, NotificationType } from 'vintasend';
+import { renderLogMessage } from 'vintasend';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MedplumNotificationBackend } from '../medplum-backend';
 
@@ -212,6 +213,61 @@ describe('MedplumNotificationBackend - Attachments', () => {
   });
 
   describe('getAttachments', () => {
+    it('should not log payload content or attachment titles', async () => {
+      const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      backend.injectLogger(logger);
+      const createdMedia = await medplumClient.createResource({ ...mockMedia, id: 'media-log-1' });
+      const createdCommunication = await medplumClient.createResource(
+        createMockCommunication({
+          payload: [
+            { contentString: 'Synthetic lab result for Jane Synthetic' },
+            {
+              contentAttachment: {
+                url: `Media/${createdMedia.id}`,
+                title: 'jane-synthetic-results.pdf',
+                contentType: 'application/pdf',
+              },
+            },
+          ],
+        }),
+      );
+      mockAttachmentManager.reconstructAttachmentFile.mockReturnValue({
+        read: vi.fn(),
+        stream: vi.fn(),
+        url: vi.fn(),
+        delete: vi.fn(),
+      });
+
+      await backend.getAttachments(createdCommunication.id as string);
+
+      const lines = [
+        ...logger.info.mock.calls,
+        ...logger.warn.mock.calls,
+        ...logger.error.mock.calls,
+      ]
+        .map(([message]) => renderLogMessage(message))
+        .join('\n');
+      expect(lines).toContain(createdMedia.id);
+      expect(lines).not.toContain('Jane Synthetic');
+      expect(lines).not.toContain('jane-synthetic-results.pdf');
+    });
+
+    it('should log a failed read as the error class without its message', async () => {
+      const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      backend.injectLogger(logger);
+      vi.spyOn(medplumClient, 'readResource').mockRejectedValue(
+        new Error('Communication for Jane Synthetic is gone'),
+      );
+
+      const result = await backend.getAttachments('comm-missing');
+
+      expect(result).toEqual([]);
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      const line = renderLogMessage(logger.error.mock.calls[0][0]);
+      expect(line).toContain('comm-missing');
+      expect(line).not.toContain('Jane Synthetic');
+    });
+
     it('should retrieve all attachments for a notification in a single batch query', async () => {
       const mockAttachmentFileInterface: AttachmentFile = {
         read: vi.fn().mockResolvedValue(Buffer.from('test')),

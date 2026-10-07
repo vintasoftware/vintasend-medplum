@@ -1,5 +1,6 @@
 import type { Binary, Media } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
+import { renderLogMessage } from 'vintasend';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MedplumAttachmentManager } from '../medplum-attachment-manager';
 
@@ -380,6 +381,34 @@ describe('MedplumAttachmentManager', () => {
 
       expect(deleteResourceSpy).toHaveBeenCalledWith('Media', 'media-123');
       expect(deleteResourceSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should log a failed Binary delete through the injected logger without the error message', async () => {
+      const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      manager.injectLogger(logger);
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(medplumClient, 'readResource').mockResolvedValue({
+        resourceType: 'Media',
+        id: 'media-123',
+        status: 'completed',
+        content: { contentType: 'application/pdf', url: 'Binary/binary-123' },
+      } as any);
+      vi.spyOn(medplumClient, 'deleteResource').mockImplementation(async (resourceType) => {
+        if (resourceType === 'Binary') {
+          throw new Error('Binary for Jane Synthetic could not be deleted');
+        }
+        return {} as any;
+      });
+
+      await manager.deleteFile('media-123');
+
+      expect(consoleWarnSpy).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      const line = renderLogMessage(logger.warn.mock.calls[0][0]);
+      expect(line).toContain('Binary/binary-123');
+      expect(line).toContain('Error');
+      expect(line).not.toContain('Jane Synthetic');
+      consoleWarnSpy.mockRestore();
     });
   });
 

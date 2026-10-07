@@ -1,3 +1,4 @@
+export { logMedplumError } from './log-medplum-error.js';
 export {
   MedplumNotificationAdapter,
   MedplumNotificationAdapterFactory,

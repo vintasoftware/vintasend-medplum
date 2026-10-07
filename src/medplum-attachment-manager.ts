@@ -3,10 +3,12 @@ import type { Binary, Media } from '@medplum/fhirtypes';
 import type {
   AttachmentFile,
   AttachmentFileRecord,
+  BaseLogger,
   FileAttachment,
   StorageIdentifiers,
 } from 'vintasend';
-import { BaseAttachmentManager } from 'vintasend';
+import { BaseAttachmentManager, log, logId } from 'vintasend';
+import { logMedplumError } from './log-medplum-error.js';
 import type { MedplumStorageIdentifiers } from './types.js';
 
 /**
@@ -19,8 +21,19 @@ import type { MedplumStorageIdentifiers } from './types.js';
  * Files are uploaded to Medplum's storage and can be accessed via URLs.
  */
 export class MedplumAttachmentManager extends BaseAttachmentManager {
+  private logger?: BaseLogger;
+
   constructor(private medplum: MedplumClient) {
     super();
+  }
+
+  /**
+   * Inject logger for debugging and monitoring.
+   *
+   * MedplumNotificationBackend forwards its own logger here when both are wired into VintaSend.
+   */
+  injectLogger(logger: BaseLogger): void {
+    this.logger = logger;
   }
 
   /**
@@ -183,8 +196,9 @@ export class MedplumAttachmentManager extends BaseAttachmentManager {
         try {
           await this.medplum.deleteResource('Binary', binaryId);
         } catch (error) {
-          // eslint-disable-next-line no-console
-          console.warn(`Failed to delete Binary resource ${binaryId}:`, error);
+          this.logger?.warn(
+            log`[MedplumAttachmentManager.deleteFile] Failed to delete Binary/${logId(binaryId)}: ${logMedplumError(error)}`,
+          );
         }
       }
     }
