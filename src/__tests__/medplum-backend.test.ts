@@ -871,6 +871,141 @@ describe('MedplumNotificationBackend', () => {
 
       expect(updated.gitCommitSha).toBeNull();
     });
+
+    const day = 24 * 60 * 60 * 1000;
+    const persistScheduled = () =>
+      backend.persistNotification({
+        userId: 'Practitioner/a',
+        notificationType: 'EMAIL',
+        title: 'Reminder',
+        bodyTemplate: 'reminder',
+        contextName: 'testContext',
+        contextParameters: { param1: 'one' },
+        sendAfter: new Date(Date.now() + 2 * day),
+        subjectTemplate: 'Reminder subject',
+        extraParams: null,
+      });
+
+    it('should write sendAfter, userId and contextParameters', async () => {
+      const created = await persistScheduled();
+      const later = new Date(Date.now() + 4 * day);
+
+      const updated = await backend.persistNotificationUpdate(created.id, {
+        sendAfter: later,
+        userId: 'Practitioner/b',
+        contextParameters: { param1: 'two' },
+      });
+      const stored = await backend.getNotification(created.id, false);
+
+      for (const notification of [updated, stored]) {
+        expect(notification?.sendAfter?.getTime()).toBe(later.getTime());
+        expect(notification).toMatchObject({
+          userId: 'Practitioner/b',
+          contextParameters: { param1: 'two' },
+        });
+      }
+    });
+
+    it('should write title, bodyTemplate, contextName and notificationType', async () => {
+      const created = await persistScheduled();
+
+      await backend.persistNotificationUpdate(created.id, {
+        title: 'Updated reminder',
+        bodyTemplate: 'updated-reminder',
+        subjectTemplate: 'Updated subject',
+        contextName: 'otherContext' as 'testContext',
+        notificationType: 'SMS',
+      });
+      const stored = await backend.getNotification(created.id, false);
+      const communication = await medplumClient.readResource('Communication', created.id);
+
+      expect(stored).toMatchObject({
+        title: 'Updated reminder',
+        bodyTemplate: 'updated-reminder',
+        subjectTemplate: 'Updated subject',
+        contextName: 'otherContext',
+        notificationType: 'SMS',
+      });
+      expect(communication.payload?.[0]).toEqual({
+        contentString: 'updated-reminder',
+        extension: [
+          {
+            url: 'http://vintasend.com/fhir/StructureDefinition/email-notification-subject',
+            valueString: 'Updated subject',
+          },
+        ],
+      });
+      expect(communication.meta?.tag?.map((tag) => tag.code)).toEqual([
+        'notification',
+        'otherContext',
+        'SMS',
+      ]);
+    });
+
+    it('should leave fields that are not in the update unchanged', async () => {
+      const created = await persistScheduled();
+
+      await backend.persistNotificationUpdate(created.id, { gitCommitSha: 'a'.repeat(40) });
+      const stored = await backend.getNotification(created.id, false);
+
+      expect(stored?.sendAfter?.getTime()).toBe(created.sendAfter?.getTime());
+      expect(stored).toMatchObject({
+        userId: 'Practitioner/a',
+        title: 'Reminder',
+        bodyTemplate: 'reminder',
+        subjectTemplate: 'Reminder subject',
+        contextName: 'testContext',
+        notificationType: 'EMAIL',
+        contextParameters: { param1: 'one' },
+      });
+    });
+
+    it('should clear the send time when sendAfter is set to null', async () => {
+      const created = await persistScheduled();
+
+      const updated = await backend.persistNotificationUpdate(created.id, { sendAfter: null });
+
+      expect(updated.sendAfter).toBeNull();
+    });
+  });
+
+  describe('persistOneOffNotificationUpdate fields', () => {
+    it('should write sendAfter, contextParameters and the recipient fields', async () => {
+      const day = 24 * 60 * 60 * 1000;
+      const created = await backend.persistOneOffNotification({
+        emailOrPhone: 'a@example.com',
+        firstName: 'Ana',
+        lastName: 'Silva',
+        notificationType: 'EMAIL',
+        title: 'Reminder',
+        bodyTemplate: 'reminder',
+        contextName: 'testContext',
+        contextParameters: { param1: 'one' },
+        sendAfter: new Date(Date.now() + 2 * day),
+        subjectTemplate: null,
+        extraParams: null,
+      });
+      const later = new Date(Date.now() + 4 * day);
+
+      const updated = await backend.persistOneOffNotificationUpdate(created.id, {
+        sendAfter: later,
+        contextParameters: { param1: 'two' },
+        emailOrPhone: 'b@example.com',
+        firstName: 'Bia',
+      });
+      const stored = await backend.getOneOffNotification(created.id, false);
+
+      for (const notification of [updated, stored]) {
+        expect(notification?.sendAfter?.getTime()).toBe(later.getTime());
+        expect(notification).toMatchObject({
+          contextParameters: { param1: 'two' },
+          emailOrPhone: 'b@example.com',
+          firstName: 'Bia',
+          lastName: 'Silva',
+          title: 'Reminder',
+        });
+      }
+    });
   });
 
   describe('applyReplicationSnapshotIfNewer', () => {
