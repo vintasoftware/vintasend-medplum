@@ -456,6 +456,62 @@ describe('MedplumNotificationBackend', () => {
     });
   });
 
+  describe('requeueNotification', () => {
+    it('moves a failed notification back to pending', async () => {
+      const created = await medplumClient.createResource(
+        createMockCommunication({ status: 'stopped', sent: '2000-01-01T00:00:00.000Z' }),
+      );
+
+      const result = await backend.requeueNotification(created.id as string, {});
+
+      expect(result.status).toBe('PENDING_SEND');
+      expect(result.sentAt).toBeNull();
+      expect(result.sendAfter).toEqual(new Date('2000-01-01T00:00:00.000Z'));
+      const stored = await medplumClient.readResource('Communication', created.id as string);
+      expect(stored.status).toBe('in-progress');
+    });
+
+    it('sets sendAfter when one is given', async () => {
+      const created = await medplumClient.createResource(
+        createMockCommunication({ status: 'stopped' }),
+      );
+      const sendAfter = new Date('2999-01-01T00:00:00.000Z');
+
+      const result = await backend.requeueNotification(created.id as string, { sendAfter });
+
+      expect(result.sendAfter).toEqual(sendAfter);
+    });
+
+    it('clears sendAfter when null is given', async () => {
+      const created = await medplumClient.createResource(
+        createMockCommunication({ status: 'stopped', sent: '2999-01-01T00:00:00.000Z' }),
+      );
+
+      const result = await backend.requeueNotification(created.id as string, { sendAfter: null });
+
+      expect(result.sendAfter).toBeNull();
+    });
+
+    it.each([
+      ['in-progress', 'PENDING_SEND'],
+      ['completed', 'SENT'],
+    ] as const)('refuses a %s notification', async (fhirStatus, status) => {
+      const created = await medplumClient.createResource(
+        createMockCommunication({ status: fhirStatus }),
+      );
+
+      await expect(backend.requeueNotification(created.id as string, {})).rejects.toThrow(
+        `in status ${status}`,
+      );
+    });
+
+    it('refuses a notification that does not exist, such as a cancelled one', async () => {
+      await expect(backend.requeueNotification('nonexistent', {})).rejects.toThrow(
+        'Notification nonexistent not found',
+      );
+    });
+  });
+
   describe('getNotification', () => {
     it('should get a notification by id', async () => {
       const mockCommunication = createMockCommunication();

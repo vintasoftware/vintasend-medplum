@@ -20,9 +20,17 @@ import type {
   NotificationOrderBy,
   NotificationStatus,
   OneOffNotificationInput,
+  RequeueNotificationOptions,
   StoredAttachment,
 } from 'vintasend';
-import { isFieldFilter, log, logCount, logId, logIds } from 'vintasend';
+import {
+  isFieldFilter,
+  log,
+  logCount,
+  logId,
+  logIds,
+  REQUEUEABLE_NOTIFICATION_STATUSES,
+} from 'vintasend';
 import { logMedplumError } from './log-medplum-error.js';
 import type { MedplumStorageIdentifiers } from './types.js';
 
@@ -889,6 +897,60 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   async cancelNotification(notificationId: Config['NotificationIdType']): Promise<void> {
     await this.medplum.deleteResource('Communication', notificationId as string);
+  }
+
+  /**
+   * Put a failed notification back into `PENDING_SEND` (`Communication.status` `in-progress`).
+   *
+   * Only `FAILED` can be re-queued here: `cancelNotification` deletes the `Communication`, so a
+   * cancelled notification no longer exists to re-queue.
+   *
+   * `Communication.sent` holds `sendAfter` while a notification is pending, and `sentAt` reads as
+   * `null` for anything not `completed`, so moving the status is what clears `sentAt`.
+   *
+   * The update carries `If-Match` on the version that was read, so a notification changed in
+   * between, by a worker or a second re-queue, makes the server refuse it instead of being
+   * overwritten.
+   */
+  async requeueNotification(
+    notificationId: Config['NotificationIdType'],
+    options: RequeueNotificationOptions,
+  ): Promise<AnyDatabaseNotification<Config>> {
+    let existing: Communication;
+    try {
+      existing = await this.medplum.readResource('Communication', notificationId as string);
+    } catch {
+      throw new Error(`Notification ${String(notificationId)} not found`);
+    }
+
+    const status = this.mapToDatabaseNotification(existing).status;
+    if (!REQUEUEABLE_NOTIFICATION_STATUSES.includes(status)) {
+      throw new Error(`Cannot requeue notification ${String(notificationId)} in status ${status}`);
+    }
+
+    const { sent: _previousSent, ...withoutSent } = existing;
+    let sent: string | undefined = existing.sent;
+    if ('sendAfter' in options) {
+      sent = options.sendAfter ? options.sendAfter.toISOString() : undefined;
+    }
+
+    const updated: Communication = {
+      ...withoutSent,
+      ...(sent ? { sent } : {}),
+      status: 'in-progress',
+      meta: {
+        ...existing.meta,
+        lastUpdated: new Date().toISOString(),
+      },
+    };
+
+    const versionId = existing.meta?.versionId;
+    const result = await this.medplum.updateResource(
+      updated,
+      versionId ? { headers: { 'If-Match': `W/"${versionId}"` } } : undefined,
+    );
+    this.logger?.info(log`Notification ${logId(notificationId)} requeued`);
+    return this.mapToDatabaseNotification(result);
   }
 
   async getNotification(
