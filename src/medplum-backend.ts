@@ -64,6 +64,12 @@ const IDENTIFIER_SYSTEMS = {
   usedTemplateVersion: 'http://vintasend.com/fhir/used-template-version',
 } as const;
 
+const ONE_OFF_EXTENSION_URLS = {
+  emailOrPhone: 'http://vintasend.com/fhir/StructureDefinition/emailOrPhone',
+  firstName: 'http://vintasend.com/fhir/StructureDefinition/firstName',
+  lastName: 'http://vintasend.com/fhir/StructureDefinition/lastName',
+} as const;
+
 export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfig>
   implements BaseNotificationBackend<Config>
 {
@@ -245,13 +251,13 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     // Extract one-off notification fields from extensions
     const emailOrPhoneExtension = communication.extension?.find(
-      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/emailOrPhone',
+      (ext) => ext.url === ONE_OFF_EXTENSION_URLS.emailOrPhone,
     );
     const firstNameExtension = communication.extension?.find(
-      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/firstName',
+      (ext) => ext.url === ONE_OFF_EXTENSION_URLS.firstName,
     );
     const lastNameExtension = communication.extension?.find(
-      (ext) => ext.url === 'http://vintasend.com/fhir/StructureDefinition/lastName',
+      (ext) => ext.url === ONE_OFF_EXTENSION_URLS.lastName,
     );
 
     const emailOrPhone = emailOrPhoneExtension?.valueString;
@@ -540,25 +546,97 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     const subjectTemplate =
       'subjectTemplate' in notification ? notification.subjectTemplate : undefined;
 
+    const withCommonFields = this.applyCommonFieldUpdates(existing, notification);
     // Update identifiers for searchable fields when they change
     const existingIdentifiers = existing.identifier || [];
     const updatedIdentifiers = this.updateIdentifiers(existingIdentifiers, notification);
-    const updatedPayload = this.updatePayloadSubjectTemplate(existing.payload, subjectTemplate);
+    const updatedPayload = this.updatePayloadSubjectTemplate(
+      withCommonFields.payload,
+      subjectTemplate,
+    );
 
     const updated: Communication = {
-      ...existing,
+      ...withCommonFields,
       ...(status === 'SENT' && { status: 'completed' }),
       ...(status === 'FAILED' && { status: 'stopped' }),
+      ...(notification.userId !== undefined && {
+        recipient: [{ reference: notification.userId as string }],
+      }),
       payload: updatedPayload,
       identifier: updatedIdentifiers,
-      meta: {
-        ...existing.meta,
-        lastUpdated: new Date().toISOString(),
-      },
     };
 
     const result = await this.medplum.updateResource(updated);
     return this.mapToDatabaseNotification(result) as DatabaseNotification<Config>;
+  }
+
+  /**
+   * Apply the update fields shared by regular and one-off notifications, written to the same
+   * places `persistNotification` / `persistOneOffNotification` write them on create. A field that
+   * is absent or `undefined` in the update leaves the stored value as it is; `sendAfter: null`
+   * clears `Communication.sent`, as it does on create.
+   */
+  private applyCommonFieldUpdates(
+    existing: Communication,
+    notification: Partial<
+      Pick<
+        Notification<Config>,
+        | 'sendAfter'
+        | 'title'
+        | 'contextName'
+        | 'contextParameters'
+        | 'notificationType'
+        | 'bodyTemplate'
+      >
+    >,
+  ): Communication {
+    const { sent: _existingSent, ...updated } = existing;
+
+    let sent = existing.sent;
+    if (notification.sendAfter !== undefined) {
+      sent = notification.sendAfter?.toISOString();
+    }
+    if (notification.title !== undefined) {
+      updated.topic = { ...existing.topic, text: notification.title || undefined };
+    }
+    if (notification.contextParameters !== undefined) {
+      updated.note = [
+        { text: JSON.stringify(notification.contextParameters) },
+        ...(existing.note ?? []).slice(1),
+      ];
+    }
+
+    // Tags are positional, as persistNotification writes them:
+    // [notification, contextName, notificationType, (one-off)].
+    const tag = [...(existing.meta?.tag ?? [])];
+    if (notification.contextName !== undefined) {
+      tag[1] = { ...tag[1], code: notification.contextName as string };
+    }
+    if (notification.notificationType !== undefined) {
+      tag[2] = { ...tag[2], code: notification.notificationType as string };
+    }
+
+    const firstPayload = existing.payload?.[0];
+    if (
+      notification.bodyTemplate !== undefined &&
+      existing.payload &&
+      firstPayload?.contentString !== undefined
+    ) {
+      updated.payload = [
+        { ...firstPayload, contentString: notification.bodyTemplate },
+        ...existing.payload.slice(1),
+      ];
+    }
+
+    return {
+      ...updated,
+      ...(sent ? { sent } : {}),
+      meta: {
+        ...existing.meta,
+        ...(tag.length > 0 && { tag }),
+        lastUpdated: new Date().toISOString(),
+      },
+    };
   }
 
   /**
@@ -1170,15 +1248,15 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       note: [{ text: JSON.stringify(notification.contextParameters) }],
       extension: [
         {
-          url: 'http://vintasend.com/fhir/StructureDefinition/emailOrPhone',
+          url: ONE_OFF_EXTENSION_URLS.emailOrPhone,
           valueString: notification.emailOrPhone,
         },
         {
-          url: 'http://vintasend.com/fhir/StructureDefinition/firstName',
+          url: ONE_OFF_EXTENSION_URLS.firstName,
           valueString: notification.firstName,
         },
         {
-          url: 'http://vintasend.com/fhir/StructureDefinition/lastName',
+          url: ONE_OFF_EXTENSION_URLS.lastName,
           valueString: notification.lastName,
         },
       ],
@@ -1219,20 +1297,31 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     const subjectTemplate =
       'subjectTemplate' in notification ? notification.subjectTemplate : undefined;
 
+    const withCommonFields = this.applyCommonFieldUpdates(existing, notification);
     const existingIdentifiers = existing.identifier || [];
     const updatedIdentifiers = this.updateIdentifiers(existingIdentifiers, notification);
-    const updatedPayload = this.updatePayloadSubjectTemplate(existing.payload, subjectTemplate);
+    const updatedPayload = this.updatePayloadSubjectTemplate(
+      withCommonFields.payload,
+      subjectTemplate,
+    );
+
+    const recipientExtensions: Record<string, string | undefined> = {
+      [ONE_OFF_EXTENSION_URLS.emailOrPhone]: notification.emailOrPhone,
+      [ONE_OFF_EXTENSION_URLS.firstName]: notification.firstName,
+      [ONE_OFF_EXTENSION_URLS.lastName]: notification.lastName,
+    };
+    const updatedExtensions = (existing.extension ?? []).map((ext) => {
+      const value = recipientExtensions[ext.url];
+      return value === undefined ? ext : { ...ext, valueString: value };
+    });
 
     const updated: Communication = {
-      ...existing,
+      ...withCommonFields,
       ...(status === 'SENT' && { status: 'completed' }),
       ...(status === 'FAILED' && { status: 'stopped' }),
+      ...(existing.extension && { extension: updatedExtensions }),
       payload: updatedPayload,
       identifier: updatedIdentifiers,
-      meta: {
-        ...existing.meta,
-        lastUpdated: new Date().toISOString(),
-      },
     };
 
     const result = await this.medplum.updateResource(updated);
