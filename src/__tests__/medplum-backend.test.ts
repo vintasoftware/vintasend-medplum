@@ -1268,9 +1268,9 @@ describe('MedplumNotificationBackend', () => {
       expect(typeof capabilities).toBe('object');
     });
 
-    it('should mark logical.or as unsupported', () => {
+    it('should mark logical.or as supported', () => {
       const capabilities = backend.getFilterCapabilities();
-      expect(capabilities['logical.or']).toBe(false);
+      expect(capabilities['logical.or']).toBe(true);
     });
 
     it('should mark logical.notNested as unsupported', () => {

@@ -1,4 +1,4 @@
-import type { MedplumClient } from '@medplum/core';
+import { getStatus, type MedplumClient, OperationOutcomeError } from '@medplum/core';
 import type { Attachment, Communication, Media } from '@medplum/fhirtypes';
 import type {
   AnyDatabaseNotification,
@@ -13,13 +13,16 @@ import type {
   FileAttachment,
   InputJsonValue,
   Notification,
+  NotificationActionCapabilities,
   NotificationAttachment,
   NotificationFilter,
   NotificationFilterFields,
   NotificationInput,
   NotificationOrderBy,
   NotificationStatus,
+  NotificationVersion,
   OneOffNotificationInput,
+  RepinNotificationOptions,
   RequeueNotificationOptions,
   StoredAttachment,
 } from 'vintasend';
@@ -29,8 +32,16 @@ import {
   logCount,
   logId,
   logIds,
+  NotificationActionError,
+  REPINNABLE_NOTIFICATION_STATUSES,
   REQUEUEABLE_NOTIFICATION_STATUSES,
 } from 'vintasend';
+import {
+  communicationStatusToNotificationStatus,
+  MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS,
+  MEDPLUM_NOTIFICATION_TAG,
+  NOTIFICATION_STATUS_TO_COMMUNICATION_STATUS,
+} from './constants.js';
 import { logMedplumError } from './log-medplum-error.js';
 import type { MedplumStorageIdentifiers } from './types.js';
 
@@ -52,17 +63,61 @@ function isStringFilterLookup(value: StringFieldFilter): value is StringFilterLo
 }
 
 /** FHIR identifier systems used by MedplumNotificationBackend for searchable fields. */
-const IDENTIFIER_SYSTEMS = {
-  bodyTemplate: 'http://vintasend.com/fhir/body-template',
-  subjectTemplate: 'http://vintasend.com/fhir/subject-template',
-  adapterUsed: 'http://vintasend.com/fhir/adapter-used',
-  gitCommitSha: 'http://vintasend.com/fhir/git-commit-sha',
-  // Template versions live in identifiers rather than extensions so `identifier` — a token
-  // search, exact and repeatable — can filter on them the way it already does for the fields
-  // above. Stored as decimal strings and parsed back on read.
-  requestedTemplateVersion: 'http://vintasend.com/fhir/requested-template-version',
-  usedTemplateVersion: 'http://vintasend.com/fhir/used-template-version',
-} as const;
+const IDENTIFIER_SYSTEMS = MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS;
+
+/**
+ * FHIR search parameters for one AND of conditions. Every value is a parameter of its own, which
+ * FHIR reads as AND; a comma inside one value is OR.
+ */
+type SearchParams = Record<string, string[]>;
+
+/** The most separate searches one OR filter may expand to. */
+const MAX_OR_BRANCHES = 16;
+
+/** The largest `_count` Medplum serves in one search. */
+const MAX_SEARCH_PAGE_SIZE = 1000;
+
+/** What `filterNotificationVersions` asks the server for: nothing of the notification's content. */
+const VERSION_ELEMENTS = 'id,meta';
+
+function cloneSearchParams(params: SearchParams): SearchParams {
+  return Object.fromEntries(Object.entries(params).map(([key, values]) => [key, [...values]]));
+}
+
+/** Both sets of conditions, ANDed: every value of either, each once. */
+function mergeSearchParams(left: SearchParams, right: SearchParams): SearchParams {
+  const merged = cloneSearchParams(left);
+  for (const [key, values] of Object.entries(right)) {
+    merged[key] ??= [];
+    const existing = merged[key];
+    for (const value of values) {
+      if (!existing.includes(value)) {
+        existing.push(value);
+      }
+    }
+  }
+  return merged;
+}
+
+/** Add one more parameter, ANDed with any already there under the same name. */
+function addSearchParam(params: SearchParams, key: string, value: string): void {
+  const values = params[key] ?? [];
+  values.push(value);
+  params[key] = values;
+}
+
+/** The order `_sort=_id` returns resources in. */
+function compareIds(a: string, b: string): number {
+  if (a < b) {
+    return -1;
+  }
+  return a > b ? 1 : 0;
+}
+
+/** Whether Medplum refused a write because `If-Match` named a version that is no longer current. */
+function isPreconditionFailed(error: unknown): boolean {
+  return error instanceof OperationOutcomeError && getStatus(error.outcome) === 412;
+}
 
 const ONE_OFF_EXTENSION_URLS = {
   emailOrPhone: 'http://vintasend.com/fhir/StructureDefinition/emailOrPhone',
@@ -123,12 +178,13 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   /**
    * Get the filter capabilities supported by Medplum backend.
-   * Medplum has limitations with OR operators and negation on date ranges.
+   * Medplum cannot negate date ranges or a group, and runs an OR as separate searches: see
+   * `filterNotifications`.
    */
   getFilterCapabilities() {
     return {
       'logical.and': true,
-      'logical.or': false,
+      'logical.or': true,
       'logical.not': true,
       'logical.notNested': false,
       'fields.status': true,
@@ -160,6 +216,25 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       'fields.usedTemplateVersion': true,
       'negation.requestedTemplateVersion': true,
       'negation.usedTemplateVersion': true,
+      // `sent:missing` and `identifier=<system>|`; negating either asks for the other value.
+      'fields.hasSendAfter': true,
+      'negation.hasSendAfter': true,
+      'fields.hasRequestedTemplateVersion': true,
+      'negation.hasRequestedTemplateVersion': true,
+    };
+  }
+
+  /**
+   * Every optional action: re-pin and re-queue check `expectedVersion` against
+   * `meta.versionId`, re-queue pins in the same write, and `filterNotificationVersions` lists
+   * without reading content.
+   */
+  getActionCapabilities(): NotificationActionCapabilities {
+    return {
+      'repin.expectedVersion': true,
+      'requeue.expectedVersion': true,
+      'requeue.templateVersion': true,
+      'versions.filter': true,
     };
   }
 
@@ -313,12 +388,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       subjectTemplate: subjectTemplateFromId,
       extraParams: {},
       tenant: communication.meta?.accounts?.[0]?.reference ?? null,
-      status:
-        communication.status === 'completed'
-          ? 'SENT'
-          : communication.status === 'stopped'
-            ? 'FAILED'
-            : 'PENDING_SEND',
+      status: communicationStatusToNotificationStatus(communication.status),
       contextUsed,
       adapterUsed,
       gitCommitSha,
@@ -988,20 +1058,35 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    *
    * The update carries `If-Match` on the version that was read, so a notification changed in
    * between, by a worker or a second re-queue, makes the server refuse it instead of being
-   * overwritten.
+   * overwritten. That refusal is a `NotificationActionError` with reason `CHANGED`.
+   *
+   * `options.templateVersion` pins the notification in the same update, and
+   * `options.expectedVersion` refuses with `CHANGED`, writing nothing, unless `meta.versionId` is
+   * still that version.
    */
   async requeueNotification(
     notificationId: Config['NotificationIdType'],
     options: RequeueNotificationOptions,
   ): Promise<AnyDatabaseNotification<Config>> {
+    const { templateVersion } = options;
+    if (
+      templateVersion !== undefined &&
+      !(Number.isInteger(templateVersion) && templateVersion >= 0)
+    ) {
+      throw new RangeError(
+        `Cannot requeue notification ${String(notificationId)}: templateVersion must be a non-negative integer`,
+      );
+    }
+
     let existing: Communication;
     try {
       existing = await this.medplum.readResource('Communication', notificationId as string);
     } catch {
       throw new Error(`Notification ${String(notificationId)} not found`);
     }
+    this.assertExpectedVersion('requeue', notificationId, existing, options.expectedVersion);
 
-    const status = this.mapToDatabaseNotification(existing).status;
+    const status = communicationStatusToNotificationStatus(existing.status);
     if (!REQUEUEABLE_NOTIFICATION_STATUSES.includes(status)) {
       throw new Error(`Cannot requeue notification ${String(notificationId)} in status ${status}`);
     }
@@ -1015,20 +1100,151 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     const updated: Communication = {
       ...withoutSent,
       ...(sent ? { sent } : {}),
-      status: 'in-progress',
+      ...(templateVersion === undefined
+        ? {}
+        : {
+            identifier: this.updateIdentifiers(existing.identifier ?? [], {
+              requestedTemplateVersion: templateVersion,
+            }),
+          }),
+      status: NOTIFICATION_STATUS_TO_COMMUNICATION_STATUS.PENDING_SEND,
       meta: {
         ...existing.meta,
         lastUpdated: new Date().toISOString(),
       },
     };
 
-    const versionId = existing.meta?.versionId;
-    const result = await this.medplum.updateResource(
-      updated,
-      versionId ? { headers: { 'If-Match': `W/"${versionId}"` } } : undefined,
-    );
-    this.logger?.info(log`Notification ${logId(notificationId)} requeued`);
+    const result = await this.updateIfUnchanged('requeue', notificationId, existing, updated);
+    if (templateVersion === undefined) {
+      this.logger?.info(log`Notification ${logId(notificationId)} requeued`);
+    } else {
+      this.logger?.info(
+        log`Notification ${logId(notificationId)} requeued on template version ${logCount(templateVersion)}`,
+      );
+    }
     return this.mapToDatabaseNotification(result);
+  }
+
+  /**
+   * Pin a notification to a template version, in one update conditional on the version read.
+   *
+   * Refuses with a `NotificationActionError`, writing nothing: `NOT_FOUND` when there is no such
+   * `Communication`, `CHANGED` when `options.expectedVersion` is not its `meta.versionId` or it
+   * changes before the update lands (`If-Match`), and `INVALID_STATUS` when it was already sent.
+   * Writes nothing either when it is already pinned to `templateVersion`.
+   */
+  async repinNotification(
+    notificationId: Config['NotificationIdType'],
+    templateVersion: number,
+    options: RepinNotificationOptions,
+  ): Promise<AnyDatabaseNotification<Config>> {
+    if (!(Number.isInteger(templateVersion) && templateVersion >= 0)) {
+      throw new RangeError(
+        `Cannot repin notification ${String(notificationId)}: templateVersion must be a non-negative integer`,
+      );
+    }
+
+    let existing: Communication;
+    try {
+      existing = await this.medplum.readResource('Communication', notificationId as string);
+    } catch {
+      throw new NotificationActionError({
+        action: 'repin',
+        reason: 'NOT_FOUND',
+        notificationId,
+        message: `Notification ${String(notificationId)} not found`,
+      });
+    }
+    this.assertExpectedVersion('repin', notificationId, existing, options.expectedVersion);
+
+    const status = communicationStatusToNotificationStatus(existing.status);
+    if (!REPINNABLE_NOTIFICATION_STATUSES.includes(status)) {
+      throw new NotificationActionError({
+        action: 'repin',
+        reason: 'INVALID_STATUS',
+        notificationId,
+        status,
+        message: `Cannot repin notification ${String(notificationId)} in status ${status}`,
+      });
+    }
+
+    if (
+      this.readTemplateVersion(existing, IDENTIFIER_SYSTEMS.requestedTemplateVersion) ===
+      templateVersion
+    ) {
+      return this.mapToDatabaseNotification(existing);
+    }
+
+    const updated: Communication = {
+      ...existing,
+      identifier: this.updateIdentifiers(existing.identifier ?? [], {
+        requestedTemplateVersion: templateVersion,
+      }),
+      meta: {
+        ...existing.meta,
+        lastUpdated: new Date().toISOString(),
+      },
+    };
+
+    const result = await this.updateIfUnchanged('repin', notificationId, existing, updated);
+    this.logger?.info(
+      log`Notification ${logId(notificationId)} repinned to template version ${logCount(templateVersion)}`,
+    );
+    return this.mapToDatabaseNotification(result);
+  }
+
+  /**
+   * Refuse with `CHANGED` when the caller expected another version than the one just read.
+   */
+  private assertExpectedVersion(
+    action: 'requeue' | 'repin',
+    notificationId: Config['NotificationIdType'],
+    existing: Communication,
+    expectedVersion: string | undefined,
+  ): void {
+    if (expectedVersion === undefined || existing.meta?.versionId === expectedVersion) {
+      return;
+    }
+    throw new NotificationActionError({
+      action,
+      reason: 'CHANGED',
+      notificationId,
+      message:
+        `Cannot ${action} notification ${String(notificationId)}: ` +
+        'it changed since the version that was expected',
+    });
+  }
+
+  /**
+   * Write `updated` only if the stored resource is still the version `existing` was read at.
+   *
+   * A refusal from the server becomes a `NotificationActionError` with reason `CHANGED`.
+   */
+  private async updateIfUnchanged(
+    action: 'requeue' | 'repin',
+    notificationId: Config['NotificationIdType'],
+    existing: Communication,
+    updated: Communication,
+  ): Promise<Communication> {
+    const versionId = existing.meta?.versionId;
+    try {
+      return await this.medplum.updateResource(
+        updated,
+        versionId ? { headers: { 'If-Match': `W/"${versionId}"` } } : undefined,
+      );
+    } catch (error) {
+      if (isPreconditionFailed(error)) {
+        throw new NotificationActionError({
+          action,
+          reason: 'CHANGED',
+          notificationId,
+          message:
+            `Cannot ${action} notification ${String(notificationId)}: ` +
+            'it changed while it was being written',
+        });
+      }
+      throw error;
+    }
   }
 
   async getNotification(
@@ -1380,14 +1596,20 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    *   - `adapterUsed`       → `identifier` (system: vintasend adapter-used)
    *   - `bodyTemplate`      → `identifier` (system: vintasend body-template)
    *   - `subjectTemplate`   → `identifier` (system: vintasend subject-template)
+   *   - `requestedTemplateVersion`, `usedTemplateVersion` → `identifier`
+   *   - `hasRequestedTemplateVersion` → `identifier=<system>|` (or `identifier:not`)
    *   - `sendAfterRange`    → `sent` (date comparators)
    *   - `sentAtRange`       → `sent` (date comparators)
+   *   - `hasSendAfter`      → `sent:missing`
    *   - `createdAtRange`    → `_lastUpdated` (date comparators)
    *
    * **Logical operators:**
-   *   - `AND`  — merges FHIR search parameters from sub-filters
-   *   - `OR`   — not supported by FHIR search (throws)
-   *   - `NOT`  — uses FHIR `:not` modifier (status, notificationType, userId only)
+   *   - `AND`  — every sub-filter's parameters, repeated, which FHIR reads as AND
+   *   - `OR`   — FHIR search cannot express it across parameters, so the filter is rewritten as
+   *     an OR of ANDs and each one is searched separately. The results are merged by ID, ordered
+   *     by ID, and paged in memory: a page costs up to `(page + 1) * pageSize` results per branch,
+   *     and an `orderBy` is refused rather than applied to the merge.
+   *   - `NOT`  — uses FHIR `:not` modifier, on a field filter only
    */
   async filterNotifications(
     filter: NotificationFilter<Config>,
@@ -1395,61 +1617,215 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     pageSize: number,
     orderBy?: NotificationOrderBy,
   ): Promise<AnyDatabaseNotification<Config>[]> {
-    if ('or' in filter) {
+    const conjunctions = this.toConjunctions(filter);
+
+    if (conjunctions.length === 1) {
+      const searchParams = conjunctions[0] as SearchParams;
+      searchParams._count = [pageSize.toString()];
+      searchParams._offset = [(page * pageSize).toString()];
+      if (orderBy) {
+        searchParams._sort = [this.convertNotificationOrderByToFhirSort(orderBy)];
+      }
+      const communications = await this.medplum.searchResources(
+        'Communication',
+        this.paramsToSearchTuples(searchParams),
+      );
+      return communications.map((comm) => this.mapToDatabaseNotification(comm));
+    }
+
+    if (orderBy) {
       throw new Error(
-        'OR filters are not supported by MedplumNotificationBackend (FHIR search does not support OR logic).',
+        'orderBy is not supported together with an OR filter by MedplumNotificationBackend: ' +
+          'the branches are merged by ID.',
       );
     }
+    const communications = await this.searchUnion(conjunctions, page, pageSize, {});
+    return communications.map((comm) => this.mapToDatabaseNotification(comm));
+  }
 
-    const searchParams = this.buildFhirSearchParams(filter);
-    searchParams._count = pageSize.toString();
-    searchParams._offset = (page * pageSize).toString();
-    if (orderBy) {
-      searchParams._sort = this.convertNotificationOrderByToFhirSort(orderBy);
+  /**
+   * The ID and `meta.versionId` of every notification matching `filter`, ordered by ID.
+   *
+   * Never reads a notification's content: every search asks for `_elements=id,meta`, so the server
+   * returns no recipient, context, context parameters, payload, rendered content or attachment, and
+   * nothing but `{ id, version }` is returned. The filter itself is evaluated by the server, so it
+   * needs no element returned. `meta` carries the version token and the type, context-name and
+   * tenant tags.
+   *
+   * Filters as `filterNotifications` does, `OR` included. `version` is `meta.versionId`; pass it as
+   * `expectedVersion` to act on the notification only while it is unchanged.
+   */
+  async filterNotificationVersions(
+    filter: NotificationFilter<Config>,
+    page: number,
+    pageSize: number,
+  ): Promise<NotificationVersion<Config>[]> {
+    const conjunctions = this.toConjunctions(filter);
+    const elements: SearchParams = { _elements: [VERSION_ELEMENTS] };
+
+    let communications: Communication[];
+    if (conjunctions.length === 1) {
+      const searchParams: SearchParams = {
+        ...(conjunctions[0] as SearchParams),
+        _sort: ['_id'],
+        _count: [pageSize.toString()],
+        _offset: [(page * pageSize).toString()],
+        ...elements,
+      };
+      communications = await this.medplum.searchResources(
+        'Communication',
+        this.paramsToSearchTuples(searchParams),
+      );
+    } else {
+      communications = await this.searchUnion(conjunctions, page, pageSize, elements);
     }
 
-    // Convert to string[][] so that _tag values become repeated AND parameters
-    // (comma-separated _tag in a single param means OR in FHIR, which is wrong here)
-    const searchTuples = this.paramsToSearchTuples(searchParams);
+    return communications.map((communication) => {
+      const version = communication.meta?.versionId;
+      if (!communication.id || !version) {
+        throw new Error(
+          `Medplum returned notification ${String(communication.id)} without a version id`,
+        );
+      }
+      return { id: communication.id as Config['NotificationIdType'], version };
+    });
+  }
 
-    const communications = await this.medplum.searchResources('Communication', searchTuples);
-    return communications.map((comm) => this.mapToDatabaseNotification(comm));
+  /**
+   * Rewrite a filter as an OR of ANDs, one set of FHIR search parameters per AND.
+   *
+   * A filter with no `or` anywhere comes back as one set, so it is searched exactly as before.
+   * An empty `or` matches nothing and comes back as none.
+   */
+  private toConjunctions(filter: NotificationFilter<Config>): SearchParams[] {
+    if ('or' in filter) {
+      const branches = (filter as { or: NotificationFilter<Config>[] }).or.flatMap((sub) =>
+        this.toConjunctions(sub),
+      );
+      this.assertBranchLimit(branches.length);
+      return branches;
+    }
+
+    if ('and' in filter) {
+      let result: SearchParams[] = [{}];
+      for (const sub of (filter as { and: NotificationFilter<Config>[] }).and) {
+        const subBranches = this.toConjunctions(sub);
+        const next: SearchParams[] = [];
+        for (const left of result) {
+          for (const right of subBranches) {
+            next.push(mergeSearchParams(left, right));
+          }
+        }
+        this.assertBranchLimit(next.length);
+        result = next;
+      }
+      return result;
+    }
+
+    if ('not' in filter) {
+      return [this.negateFilter((filter as { not: NotificationFilter<Config> }).not)];
+    }
+
+    return [this.fieldFilterToFhirParams(filter as NotificationFilterFields<Config>)];
+  }
+
+  private assertBranchLimit(branches: number): void {
+    if (branches > MAX_OR_BRANCHES) {
+      throw new Error(
+        `Filter expands to ${branches} separate searches, more than the ${MAX_OR_BRANCHES} ` +
+          'MedplumNotificationBackend runs for one OR filter. Split it into several calls.',
+      );
+    }
+  }
+
+  /**
+   * One page of the union of several searches, ordered by ID.
+   *
+   * Each branch is searched sorted by `_id` for its first `(page + 1) * pageSize` results, which
+   * is enough to hold the page wherever it falls in the union. They are merged without
+   * duplicates, sorted by ID the way the server sorts them, and sliced.
+   */
+  private async searchUnion(
+    conjunctions: SearchParams[],
+    page: number,
+    pageSize: number,
+    extra: SearchParams,
+  ): Promise<Communication[]> {
+    const offset = page * pageSize;
+    const needed = offset + pageSize;
+    if (needed <= 0) {
+      return [];
+    }
+
+    const byId = new Map<string, Communication>();
+    for (const conjunction of conjunctions) {
+      for (const communication of await this.searchPrefix(conjunction, needed, extra)) {
+        if (communication.id && !byId.has(communication.id)) {
+          byId.set(communication.id, communication);
+        }
+      }
+    }
+
+    return [...byId.values()]
+      .sort((a, b) => compareIds(a.id as string, b.id as string))
+      .slice(offset, needed);
+  }
+
+  /** The first `limit` results of one search, sorted by `_id`, fetched in server-sized pages. */
+  private async searchPrefix(
+    conjunction: SearchParams,
+    limit: number,
+    extra: SearchParams,
+  ): Promise<Communication[]> {
+    const results: Communication[] = [];
+    while (results.length < limit) {
+      const count = Math.min(MAX_SEARCH_PAGE_SIZE, limit - results.length);
+      const searchParams: SearchParams = {
+        ...cloneSearchParams(conjunction),
+        _sort: ['_id'],
+        _count: [count.toString()],
+        _offset: [results.length.toString()],
+        ...extra,
+      };
+      const batch = await this.medplum.searchResources(
+        'Communication',
+        this.paramsToSearchTuples(searchParams),
+      );
+      results.push(...batch);
+      if (batch.length < count) {
+        break;
+      }
+    }
+    return results;
   }
 
   /**
    * Ensure the `_tag` parameter always includes `notification`.
    * Mutates the params record in place.
    */
-  private ensureNotificationTag(params: Record<string, string>): void {
-    if (params._tag) {
-      if (!params._tag.split(',').includes('notification')) {
-        params._tag = `notification,${params._tag}`;
+  private ensureNotificationTag(params: SearchParams): void {
+    const tags = params._tag;
+    if (tags) {
+      if (!tags.includes(MEDPLUM_NOTIFICATION_TAG)) {
+        tags.unshift(MEDPLUM_NOTIFICATION_TAG);
       }
     } else {
-      params._tag = 'notification';
+      params._tag = [MEDPLUM_NOTIFICATION_TAG];
     }
   }
 
   /**
-   * Convert a `Record<string, string>` FHIR search params object into `string[][]` tuples.
+   * Convert search parameters into `string[][]` tuples, one per value.
    *
-   * This is needed because the `_tag` parameter uses comma-separated values internally
-   * to accumulate multiple tags (notificationType + contextName + 'notification'), but
-   * **FHIR treats comma-separated token values as OR**. To get AND semantics we must
-   * repeat the parameter: `_tag=notification&_tag=SMS` instead of `_tag=notification,SMS`.
-   *
-   * All other parameters are passed through as single key-value pairs.
+   * Each value becomes a parameter of its own, which FHIR reads as AND: `_tag=notification&_tag=SMS`,
+   * or two `identifier` conditions on different systems. A comma inside one value is OR, which is
+   * what a list of values for one field means.
    */
-  private paramsToSearchTuples(params: Record<string, string>): string[][] {
+  private paramsToSearchTuples(params: SearchParams): string[][] {
     this.ensureNotificationTag(params);
     const tuples: string[][] = [];
-    for (const [key, value] of Object.entries(params)) {
-      if (key === '_tag') {
-        // Split into separate entries for AND semantics
-        for (const tag of value.split(',')) {
-          tuples.push(['_tag', tag.trim()]);
-        }
-      } else {
+    for (const [key, values] of Object.entries(params)) {
+      for (const value of values) {
         tuples.push([key, value]);
       }
     }
@@ -1457,57 +1833,12 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   /**
-   * Recursively build FHIR search parameters from a NotificationFilter tree.
-   * Handles field filters, AND, and NOT. OR is handled at the caller level.
-   */
-  private buildFhirSearchParams(filter: NotificationFilter<Config>): Record<string, string> {
-    if ('or' in filter) {
-      throw new Error(
-        'OR filters are not supported by MedplumNotificationBackend (FHIR search does not support OR logic).',
-      );
-    }
-
-    if ('and' in filter) {
-      return this.mergeAndFilters((filter as { and: NotificationFilter<Config>[] }).and);
-    }
-
-    if ('not' in filter) {
-      return this.negateFilter((filter as { not: NotificationFilter<Config> }).not);
-    }
-
-    // Leaf field filter
-    return this.fieldFilterToFhirParams(filter as NotificationFilterFields<Config>);
-  }
-
-  /**
-   * Merge FHIR search parameters from multiple AND sub-filters.
-   */
-  private mergeAndFilters(subFilters: NotificationFilter<Config>[]): Record<string, string> {
-    const merged: Record<string, string> = {};
-    for (const sub of subFilters) {
-      const params = this.buildFhirSearchParams(sub);
-      for (const [key, value] of Object.entries(params)) {
-        if (key in merged && merged[key] !== value) {
-          throw new Error(
-            `Conflicting values for FHIR search parameter '${key}' in AND filter: ` +
-              `'${merged[key]}' vs '${value}'. ` +
-              'AND sub-filters must not set different values for the same search parameter.',
-          );
-        }
-        merged[key] = value;
-      }
-    }
-    return merged;
-  }
-
-  /**
    * Convert a leaf field filter to FHIR search parameters.
    * Throws for fields that are not queryable via FHIR search.
    */
-  private fieldFilterToFhirParams(
-    filter: NotificationFilterFields<Config>,
-  ): Record<string, string> {
-    const params: Record<string, string> = {};
+  private fieldFilterToFhirParams(filter: NotificationFilterFields<Config>): SearchParams {
+    const params: SearchParams = {};
+    const add = (key: string, value: string): void => addSearchParam(params, key, value);
 
     // Status → Communication.status (comma-separated = OR)
     if (filter.status !== undefined) {
@@ -1518,83 +1849,78 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         .map((s) => this.mapStatusToFhirStatus(s))
         .filter((s): s is string => s !== null);
       if (fhirStatuses.length > 0) {
-        params.status = fhirStatuses.join(',');
+        add('status', fhirStatuses.join(','));
       }
     }
 
-    // Notification type → _tag (comma-separated = AND in FHIR tags)
+    // Notification type → _tag, one parameter per type
     if (filter.notificationType !== undefined) {
       const types = Array.isArray(filter.notificationType)
         ? filter.notificationType
         : [filter.notificationType];
-      params._tag = types.join(',');
+      for (const type of types) {
+        add('_tag', type);
+      }
     }
 
-    // contextName → _tag (appended to existing _tag)
+    // contextName → _tag
     if (filter.contextName !== undefined) {
-      const contextName = this.resolveStringFieldForFhir('contextName', filter.contextName);
-      params._tag = params._tag ? `${params._tag},${contextName}` : contextName;
+      add('_tag', this.resolveStringFieldForFhir('contextName', filter.contextName));
     }
 
     // UserId → recipient
     if (filter.userId !== undefined) {
-      params.recipient = filter.userId as string;
+      add('recipient', filter.userId as string);
     }
 
-    // adapterUsed → identifier search with system
-    if (filter.adapterUsed !== undefined) {
-      const adapters: string[] = Array.isArray(filter.adapterUsed)
-        ? filter.adapterUsed
-        : [filter.adapterUsed];
-      params.identifier = adapters.map((a) => `${IDENTIFIER_SYSTEMS.adapterUsed}|${a}`).join(',');
-    }
-
-    // bodyTemplate → identifier search with system
-    if (filter.bodyTemplate !== undefined) {
-      const bodyTemplate = this.resolveStringFieldForFhir('bodyTemplate', filter.bodyTemplate);
-      params.identifier = params.identifier
-        ? `${params.identifier},${IDENTIFIER_SYSTEMS.bodyTemplate}|${bodyTemplate}`
-        : `${IDENTIFIER_SYSTEMS.bodyTemplate}|${bodyTemplate}`;
-    }
-
-    // subjectTemplate → identifier search with system
-    if (filter.subjectTemplate !== undefined) {
-      const subjectTemplate = this.resolveStringFieldForFhir(
-        'subjectTemplate',
-        filter.subjectTemplate,
-      );
-      params.identifier = params.identifier
-        ? `${params.identifier},${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`
-        : `${IDENTIFIER_SYSTEMS.subjectTemplate}|${subjectTemplate}`;
-    }
-
-    // requestedTemplateVersion / usedTemplateVersion → identifier search with system.
-    // Comma-separated values are OR, which is exactly what a list of versions means. They join
-    // the same `identifier` parameter as the fields above; FHIR reads several values in one
-    // parameter as OR, so naming two different fields there at once would ask for the wrong
-    // thing — but the service never builds such a filter as a single leaf, and an AND group
-    // reaches `mergeAndFilters`, which refuses a conflict rather than silently widening.
-    const appendIdentifier = (value: string): void => {
-      params.identifier = params.identifier ? `${params.identifier},${value}` : value;
+    // Identifier-backed fields. Each field is its own `identifier` parameter, so two fields are
+    // ANDed; the values of one field are comma-separated, so they are ORed.
+    const addIdentifier = (system: string, values: readonly (string | number)[]): void => {
+      add('identifier', values.map((value) => `${system}|${value}`).join(','));
     };
 
+    if (filter.adapterUsed !== undefined) {
+      addIdentifier(
+        IDENTIFIER_SYSTEMS.adapterUsed,
+        Array.isArray(filter.adapterUsed) ? filter.adapterUsed : [filter.adapterUsed],
+      );
+    }
+
+    if (filter.bodyTemplate !== undefined) {
+      addIdentifier(IDENTIFIER_SYSTEMS.bodyTemplate, [
+        this.resolveStringFieldForFhir('bodyTemplate', filter.bodyTemplate),
+      ]);
+    }
+
+    if (filter.subjectTemplate !== undefined) {
+      addIdentifier(IDENTIFIER_SYSTEMS.subjectTemplate, [
+        this.resolveStringFieldForFhir('subjectTemplate', filter.subjectTemplate),
+      ]);
+    }
+
     if (filter.requestedTemplateVersion !== undefined) {
-      const versions = Array.isArray(filter.requestedTemplateVersion)
-        ? filter.requestedTemplateVersion
-        : [filter.requestedTemplateVersion];
-      appendIdentifier(
-        versions
-          .map((version) => `${IDENTIFIER_SYSTEMS.requestedTemplateVersion}|${version}`)
-          .join(','),
+      addIdentifier(
+        IDENTIFIER_SYSTEMS.requestedTemplateVersion,
+        Array.isArray(filter.requestedTemplateVersion)
+          ? filter.requestedTemplateVersion
+          : [filter.requestedTemplateVersion],
       );
     }
 
     if (filter.usedTemplateVersion !== undefined) {
-      const versions = Array.isArray(filter.usedTemplateVersion)
-        ? filter.usedTemplateVersion
-        : [filter.usedTemplateVersion];
-      appendIdentifier(
-        versions.map((version) => `${IDENTIFIER_SYSTEMS.usedTemplateVersion}|${version}`).join(','),
+      addIdentifier(
+        IDENTIFIER_SYSTEMS.usedTemplateVersion,
+        Array.isArray(filter.usedTemplateVersion)
+          ? filter.usedTemplateVersion
+          : [filter.usedTemplateVersion],
+      );
+    }
+
+    // `system|` with no value is "any value in this system": the identifier is there.
+    if (filter.hasRequestedTemplateVersion !== undefined) {
+      add(
+        filter.hasRequestedTemplateVersion ? 'identifier' : 'identifier:not',
+        `${IDENTIFIER_SYSTEMS.requestedTemplateVersion}|`,
       );
     }
 
@@ -1602,36 +1928,41 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     if (filter.tenant !== undefined) {
       const tenants: string[] = Array.isArray(filter.tenant) ? filter.tenant : [filter.tenant];
       // FHIR comma-separated values mean OR; Medplum supports this for _compartment
-      params._compartment = tenants.join(',');
+      add('_compartment', tenants.join(','));
     }
 
     // sendAfterRange → sent date comparators
     if (filter.sendAfterRange) {
       if (filter.sendAfterRange.from) {
-        params['sent:ge'] = filter.sendAfterRange.from.toISOString();
+        add('sent:ge', filter.sendAfterRange.from.toISOString());
       }
       if (filter.sendAfterRange.to) {
-        params['sent:le'] = filter.sendAfterRange.to.toISOString();
+        add('sent:le', filter.sendAfterRange.to.toISOString());
       }
+    }
+
+    // hasSendAfter → whether `Communication.sent` is there at all
+    if (filter.hasSendAfter !== undefined) {
+      add('sent:missing', String(!filter.hasSendAfter));
     }
 
     // sentAtRange → sent date comparators
     if (filter.sentAtRange) {
       if (filter.sentAtRange.from) {
-        params['sent:ge'] = filter.sentAtRange.from.toISOString();
+        add('sent:ge', filter.sentAtRange.from.toISOString());
       }
       if (filter.sentAtRange.to) {
-        params['sent:le'] = filter.sentAtRange.to.toISOString();
+        add('sent:le', filter.sentAtRange.to.toISOString());
       }
     }
 
     // createdAtRange → _lastUpdated (best approximation in FHIR)
     if (filter.createdAtRange) {
       if (filter.createdAtRange.from) {
-        params['_lastUpdated:ge'] = filter.createdAtRange.from.toISOString();
+        add('_lastUpdated:ge', filter.createdAtRange.from.toISOString());
       }
       if (filter.createdAtRange.to) {
-        params['_lastUpdated:le'] = filter.createdAtRange.to.toISOString();
+        add('_lastUpdated:le', filter.createdAtRange.to.toISOString());
       }
     }
 
@@ -1643,10 +1974,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    *
    * Supports every field the capability map reports `negation.*` for: `status`,
    * `notificationType`, `contextName`, `userId`, `adapterUsed`, `bodyTemplate`,
-   * `subjectTemplate` and the two template versions. The date ranges throw, and the map
-   * declares them false to match.
+   * `subjectTemplate`, the two template versions, and the two presence fields, which negate by
+   * asking for the other value. The date ranges throw, and the map declares them false to match.
    */
-  private negateFilter(inner: NotificationFilter<Config>): Record<string, string> {
+  private negateFilter(inner: NotificationFilter<Config>): SearchParams {
     if (!isFieldFilter(inner)) {
       throw new Error(
         'NOT filters are only supported for simple field filters in MedplumNotificationBackend.',
@@ -1757,13 +2088,26 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       );
     }
 
-    if (Object.keys(params).length === 0) {
+    const negated: SearchParams = Object.fromEntries(
+      Object.entries(params).map(([key, value]) => [key, [value]]),
+    );
+
+    // The presence fields negate by asking for the other value, as their own parameters.
+    if (filter.hasRequestedTemplateVersion !== undefined) {
+      const key = filter.hasRequestedTemplateVersion ? 'identifier:not' : 'identifier';
+      addSearchParam(negated, key, `${IDENTIFIER_SYSTEMS.requestedTemplateVersion}|`);
+    }
+    if (filter.hasSendAfter !== undefined) {
+      addSearchParam(negated, 'sent:missing', String(filter.hasSendAfter));
+    }
+
+    if (Object.keys(negated).length === 0) {
       throw new Error(
-        'NOT filter must contain at least one supported negatable field (status, notificationType, contextName, userId, adapterUsed, bodyTemplate, subjectTemplate, requestedTemplateVersion, usedTemplateVersion).',
+        'NOT filter must contain at least one supported negatable field (status, notificationType, contextName, userId, adapterUsed, bodyTemplate, subjectTemplate, requestedTemplateVersion, usedTemplateVersion, hasRequestedTemplateVersion, hasSendAfter).',
       );
     }
 
-    return params;
+    return negated;
   }
 
   /**
@@ -1778,19 +2122,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    * Map VintaSend NotificationStatus to FHIR Communication status.
    */
   private mapStatusToFhirStatus(status: NotificationStatus): string | null {
-    switch (status) {
-      case 'PENDING_SEND':
-        return 'in-progress';
-      case 'SENT':
-      case 'READ':
-        return 'completed';
-      case 'FAILED':
-        return 'stopped';
-      case 'CANCELLED':
-        return 'not-done';
-      default:
-        return null;
-    }
+    return NOTIFICATION_STATUS_TO_COMMUNICATION_STATUS[status] ?? null;
   }
 
   /* Attachment management methods */

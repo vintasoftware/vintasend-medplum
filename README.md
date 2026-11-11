@@ -167,6 +167,26 @@ Files are stored using two FHIR resources:
 | SENT            | completed                 |
 | FAILED          | stopped                   |
 
+`READ` is stored as `completed` too, and `CANCELLED` is never stored: `cancelNotification` deletes
+the `Communication`.
+
+### Storage constants
+
+For code that still has to search or read the `Communication` resources itself, the package exports
+what the backend writes, so nobody has to copy them:
+
+```typescript
+import {
+  MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS, // { bodyTemplate, subjectTemplate, adapterUsed, gitCommitSha, requestedTemplateVersion, usedTemplateVersion }
+  MEDPLUM_NOTIFICATION_TAG, // 'notification', on every notification's meta.tag
+  NOTIFICATION_STATUS_TO_COMMUNICATION_STATUS, // NotificationStatus → Communication.status
+  communicationStatusToNotificationStatus, // Communication.status → NotificationStatus
+} from 'vintasend-medplum';
+```
+
+Prefer `filterNotificationVersions` below for counting and selecting: a search of your own returns
+whole resources, recipients and contexts included, unless you limit `_elements` yourself.
+
 ## Installation
 
 ```bash
@@ -473,6 +493,73 @@ const unread = await notificationService.filterInAppUnreadNotifications(
 await notificationService.markAsRead(notificationId);
 ```
 
+### Filtering
+
+`filterNotifications` translates a filter into a FHIR search. Fields map to search parameters
+(`status`, `_tag`, `recipient`, `identifier`, `sent`, `_lastUpdated`, `_compartment`), several
+conditions are ANDed by repeating parameters, and `{ not: ... }` uses the `:not` modifier on a
+field filter.
+
+* **`OR`** is supported (`logical.or: true`), although FHIR search cannot express it across
+  parameters. The filter is rewritten as an OR of ANDs, each branch is searched on its own, and the
+  results are merged by ID, ordered by ID and paged in memory. A page costs up to
+  `(page + 1) * pageSize` results per branch, a filter expanding to more than 16 branches is
+  refused, and `orderBy` is refused together with `OR` rather than applied to the merge.
+* **`hasSendAfter`** (`sent:missing`) and **`hasRequestedTemplateVersion`**
+  (`identifier=<system>|`) match notifications with or without a send time or a template pin.
+  Negating either asks for the other value.
+* Two identifier-backed fields in one filter, such as `bodyTemplate` and
+  `requestedTemplateVersion`, are ANDed. Before this release they were sent as one comma-separated
+  `identifier` parameter, which FHIR reads as OR.
+
+### Moving notifications safely
+
+To move a template key's pending and failed emails onto a newly published version without reading
+them, and without moving one that changed since it was counted:
+
+```typescript
+const V = 4;
+const pendingOnAnotherVersion = {
+  and: [
+    { bodyTemplate: 'welcome', status: 'PENDING_SEND', hasSendAfter: true },
+    { hasRequestedTemplateVersion: true },
+    { not: { requestedTemplateVersion: V } },
+  ],
+} as const;
+const failed = { bodyTemplate: 'welcome', status: 'FAILED' } as const;
+
+// IDs and version tokens only: every search asks for `_elements=id,meta`. The OR of both is what
+// an admin is shown as the count.
+const toMove = await notificationService.filterNotificationVersions(
+  { or: [pendingOnAnotherVersion, failed] },
+  0,
+  1000,
+);
+
+for (const { id, version } of await notificationService.filterNotificationVersions(pendingOnAnotherVersion, 0, 100)) {
+  await notificationService.repinNotification(id, { templateVersion: V, expectedVersion: version });
+}
+for (const { id, version } of await notificationService.filterNotificationVersions(failed, 0, 100)) {
+  // Pin and re-queue in one write. `send: false` leaves it to sendPendingNotifications, so this
+  // process needs no mail credentials.
+  await notificationService.requeueNotification(id, { templateVersion: V, expectedVersion: version, send: false });
+}
+```
+
+* `version` is the `Communication`'s `meta.versionId`. `expectedVersion` makes the backend refuse
+  with `NotificationActionError` reason `CHANGED`, writing nothing, when the notification is at
+  another version.
+* `repinNotification` and `requeueNotification` both write with `If-Match` on the version they
+  read, with or without `expectedVersion`, so a notification that changes between that read and the
+  write is refused with `CHANGED` too, instead of being overwritten.
+* `requeueNotification(id, { templateVersion })` changes the status and the
+  `requested-template-version` identifier in one update.
+* Moving notifications changes which ones match, so list again from page 0 rather than moving on to
+  the next page.
+
+`getActionCapabilities()` reports all four optional actions (`repin.expectedVersion`,
+`requeue.expectedVersion`, `requeue.templateVersion`, `versions.filter`).
+
 ### Canceling Notifications
 
 ```typescript
@@ -570,6 +657,9 @@ constructor(
 - `markAsSent(id)` - Mark notification as successfully sent
 - `markAsFailed(id)` - Mark notification as failed
 - `cancelNotification(id)` - Cancel a scheduled notification
+- `filterNotificationVersions(filter, page, pageSize)` - IDs and version tokens only, without reading content
+- `repinNotification(id, templateVersion, { expectedVersion? })` - Re-pin in one conditional update
+- `requeueNotification(id, { sendAfter?, templateVersion?, expectedVersion? })` - Re-queue, optionally re-pinning, in one conditional update
 
 ### MedplumNotificationAdapter
 
