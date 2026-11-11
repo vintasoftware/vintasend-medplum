@@ -1066,6 +1066,7 @@ describe('MedplumNotificationBackend', () => {
         sentAt: null,
         readAt: null,
         gitCommitSha: null,
+        notificationVersion: 'primary-token',
         createdAt: new Date('2026-02-28T10:00:00.000Z'),
         updatedAt: new Date('2026-02-28T11:00:00.000Z'),
       };
@@ -1082,9 +1083,11 @@ describe('MedplumNotificationBackend', () => {
       const result = await backend.applyReplicationSnapshotIfNewer(snapshot as any);
 
       expect(result).toEqual({ applied: true });
+      // The snapshot's token is the primary's, so the replica stores it rather than minting one.
       expect(persistNotificationUpdateSpy).toHaveBeenCalledWith(
         'notif-1',
         expect.objectContaining({ title: 'Incoming title' }),
+        { notificationVersion: 'primary-token' },
       );
     });
   });

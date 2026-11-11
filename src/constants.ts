@@ -25,6 +25,12 @@ export const MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS = {
   // above. Stored as decimal strings and parsed back on read.
   requestedTemplateVersion: 'http://vintasend.com/fhir/requested-template-version',
   usedTemplateVersion: 'http://vintasend.com/fhir/used-template-version',
+  // The notification's version token (`notificationVersion`). The primary backend writes a new
+  // one on every write, and a replica stores the primary's, so the same version of a notification
+  // has the same token on every backend. `meta.versionId` cannot serve: the server assigns it, so
+  // a replica cannot copy it. A Communication written before this identifier existed has none, and
+  // its token is its `meta.versionId` until its next write gives it one.
+  notificationVersion: 'http://vintasend.com/fhir/notification-version',
 } as const;
 
 /**

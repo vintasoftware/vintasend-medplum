@@ -8,6 +8,7 @@ import type {
   BaseLogger,
   BaseNotificationBackend,
   BaseNotificationTypeConfig,
+  BulkNotificationWriteOptions,
   DatabaseNotification,
   DatabaseOneOffNotification,
   FileAttachment,
@@ -21,6 +22,8 @@ import type {
   NotificationOrderBy,
   NotificationStatus,
   NotificationVersion,
+  NotificationWriteOptions,
+  NotificationWriteResult,
   OneOffNotificationInput,
   RepinNotificationOptions,
   RequeueNotificationOptions,
@@ -77,8 +80,14 @@ const MAX_OR_BRANCHES = 16;
 /** The largest `_count` Medplum serves in one search. */
 const MAX_SEARCH_PAGE_SIZE = 1000;
 
-/** What `filterNotificationVersions` asks the server for: nothing of the notification's content. */
-const VERSION_ELEMENTS = 'id,meta';
+/**
+ * What `filterNotificationVersions` asks the server for: nothing of the notification's content.
+ *
+ * `identifier` holds the version token. The other identifiers it brings along are template keys,
+ * template versions, the adapter key and the git commit SHA, none of which is notification
+ * content.
+ */
+const VERSION_ELEMENTS = 'id,meta,identifier';
 
 function cloneSearchParams(params: SearchParams): SearchParams {
   return Object.fromEntries(Object.entries(params).map(([key, values]) => [key, [...values]]));
@@ -225,9 +234,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   /**
-   * Every optional action: re-pin and re-queue check `expectedVersion` against
-   * `meta.versionId`, re-queue pins in the same write, and `filterNotificationVersions` lists
-   * without reading content.
+   * Every optional action: re-pin and re-queue check `expectedVersion` against the version token,
+   * re-queue pins in the same write, and `filterNotificationVersions` lists without reading
+   * content.
    */
   getActionCapabilities(): NotificationActionCapabilities {
     return {
@@ -252,6 +261,42 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     }
     const parsed = Number.parseInt(raw, 10);
     return Number.isInteger(parsed) ? parsed : null;
+  }
+
+  /**
+   * The notification's version token: the `notification-version` identifier, or `meta.versionId`
+   * for a Communication written before that identifier existed, until its next write gives it one.
+   *
+   * This is what reads return as `notificationVersion`, what `filterNotificationVersions` lists and
+   * what `expectedVersion` is compared against, so all three agree on legacy resources too.
+   */
+  private readNotificationVersion(communication: Communication): string | undefined {
+    return (
+      communication.identifier?.find(
+        (identifier) => identifier.system === IDENTIFIER_SYSTEMS.notificationVersion,
+      )?.value ?? communication.meta?.versionId
+    );
+  }
+
+  /**
+   * The token a write stores: the one it was handed when it copies a write the primary made, or a
+   * new one when this backend is the primary.
+   */
+  private nextNotificationVersion(options: NotificationWriteOptions | undefined): string {
+    return options?.notificationVersion ?? crypto.randomUUID();
+  }
+
+  /** `identifiers` with the version token set to `notificationVersion`, replacing any there. */
+  private withNotificationVersion(
+    identifiers: Communication['identifier'],
+    notificationVersion: string,
+  ): NonNullable<Communication['identifier']> {
+    return [
+      ...(identifiers ?? []).filter(
+        (identifier) => identifier.system !== IDENTIFIER_SYSTEMS.notificationVersion,
+      ),
+      { system: IDENTIFIER_SYSTEMS.notificationVersion, value: notificationVersion },
+    ];
   }
 
   private isDuplicateReplicationConflict(error: unknown): boolean {
@@ -394,6 +439,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       gitCommitSha,
       requestedTemplateVersion,
       usedTemplateVersion,
+      notificationVersion: this.readNotificationVersion(communication),
       sentAt:
         communication.status === 'completed' ? new Date(communication.sent || new Date()) : null,
       readAt: null,
@@ -517,6 +563,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   async persistNotification(
     notification: Omit<Notification<Config>, 'id'> & { id?: Config['NotificationIdType'] },
+    options?: NotificationWriteOptions,
   ): Promise<DatabaseNotification<Config>> {
     const notificationWithOptionalFields = notification as NotificationInput<Config> & {
       gitCommitSha?: string | null;
@@ -584,7 +631,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       sent: notification.sendAfter?.toISOString(),
       topic: { text: notification.title || undefined },
       payload,
-      identifier: identifiers,
+      identifier: this.withNotificationVersion(identifiers, this.nextNotificationVersion(options)),
       recipient: [{ reference: notification.userId as string }],
       note: [{ text: JSON.stringify(notification.contextParameters) }],
       meta: {
@@ -622,6 +669,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async persistNotificationUpdate(
     notificationId: Config['NotificationIdType'],
     notification: Partial<Omit<Notification<Config>, 'id'>>,
+    options?: NotificationWriteOptions,
   ): Promise<DatabaseNotification<Config>> {
     const existing = await this.medplum.readResource('Communication', notificationId as string);
     this.assertTenantUnchanged(existing, notification, notificationId);
@@ -646,7 +694,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         recipient: [{ reference: notification.userId as string }],
       }),
       payload: updatedPayload,
-      identifier: updatedIdentifiers,
+      identifier: this.withNotificationVersion(
+        updatedIdentifiers,
+        this.nextNotificationVersion(options),
+      ),
     };
 
     const result = await this.medplum.updateResource(updated);
@@ -759,11 +810,17 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       return { applied: false };
     }
 
+    // The snapshot was read from the primary, so its token is the primary's: store it as it is.
+    const writeOptions: NotificationWriteOptions = {
+      notificationVersion: snapshot.notificationVersion,
+    };
+
     if ('emailOrPhone' in snapshot) {
       if (existingNotification) {
         await this.persistOneOffNotificationUpdate(
           snapshot.id,
           snapshot as unknown as Partial<Omit<OneOffNotificationInput<Config>, 'id'>>,
+          writeOptions,
         );
 
         return { applied: true };
@@ -774,6 +831,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
           snapshot as unknown as Omit<OneOffNotificationInput<Config>, 'id'> & {
             id?: Config['NotificationIdType'];
           },
+          writeOptions,
         );
       } catch (createError) {
         if (!this.isDuplicateReplicationConflict(createError)) {
@@ -783,6 +841,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         await this.persistOneOffNotificationUpdate(
           snapshot.id,
           snapshot as unknown as Partial<Omit<OneOffNotificationInput<Config>, 'id'>>,
+          writeOptions,
         );
       }
 
@@ -793,6 +852,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       await this.persistNotificationUpdate(
         snapshot.id,
         snapshot as unknown as Partial<Omit<Notification<Config>, 'id'>>,
+        writeOptions,
       );
 
       return { applied: true };
@@ -803,6 +863,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
         snapshot as unknown as Omit<Notification<Config>, 'id'> & {
           id?: Config['NotificationIdType'];
         },
+        writeOptions,
       );
     } catch (createError) {
       if (!this.isDuplicateReplicationConflict(createError)) {
@@ -812,6 +873,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       await this.persistNotificationUpdate(
         snapshot.id,
         snapshot as unknown as Partial<Omit<Notification<Config>, 'id'>>,
+        writeOptions,
       );
     }
 
@@ -917,10 +979,11 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   async bulkPersistNotifications(
     notifications: Omit<NotificationInput<Config>, 'id'>[],
+    options?: BulkNotificationWriteOptions,
   ): Promise<Config['NotificationIdType'][]> {
     const ids: Config['NotificationIdType'][] = [];
 
-    for (const notification of notifications) {
+    for (const [index, notification] of notifications.entries()) {
       const bulkIdentifiers: Communication['identifier'] = [
         { system: IDENTIFIER_SYSTEMS.bodyTemplate, value: notification.bodyTemplate },
       ];
@@ -974,7 +1037,12 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
               },
             ]
           : [],
-        identifier: bulkIdentifiers,
+        identifier: this.withNotificationVersion(
+          bulkIdentifiers,
+          this.nextNotificationVersion({
+            notificationVersion: options?.notificationVersions?.[index],
+          }),
+        ),
         recipient: [{ reference: notification.userId as string }],
         note: [{ text: JSON.stringify(notification.contextParameters) }],
         meta: {
@@ -999,6 +1067,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async markAsSent(
     notificationId: Config['NotificationIdType'],
     checkIsPending = true,
+    options?: NotificationWriteOptions,
   ): Promise<AnyDatabaseNotification<Config>> {
     const notification = await this.getNotification(notificationId, false);
     if (checkIsPending && notification?.status !== 'PENDING_SEND') {
@@ -1009,6 +1078,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     const updated: Communication = {
       ...existing,
       status: 'completed',
+      identifier: this.withNotificationVersion(
+        existing.identifier,
+        this.nextNotificationVersion(options),
+      ),
       meta: {
         ...existing.meta,
         lastUpdated: new Date().toISOString(),
@@ -1021,6 +1094,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async markAsFailed(
     notificationId: Config['NotificationIdType'],
     checkIsPending = true,
+    options?: NotificationWriteOptions,
   ): Promise<AnyDatabaseNotification<Config>> {
     const notification = await this.getNotification(notificationId, false);
     if (checkIsPending && notification?.status !== 'PENDING_SEND') {
@@ -1031,6 +1105,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     const updated: Communication = {
       ...existing,
       status: 'stopped',
+      identifier: this.withNotificationVersion(
+        existing.identifier,
+        this.nextNotificationVersion(options),
+      ),
       meta: {
         ...existing.meta,
         lastUpdated: new Date().toISOString(),
@@ -1043,6 +1121,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async markAsRead(
     notificationId: Config['NotificationIdType'],
     checkIsSent = true,
+    options?: NotificationWriteOptions,
   ): Promise<DatabaseNotification<Config>> {
     const notification = await this.getNotification(notificationId, false);
     if (checkIsSent && notification?.status !== 'SENT') {
@@ -1053,10 +1132,19 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       throw new Error('Cannot mark one-off notification as read');
     }
     const updatePayload = { readAt: new Date() } as Partial<Omit<Notification<Config>, 'id'>>;
-    return this.persistNotificationUpdate(notificationId, updatePayload);
+    return this.persistNotificationUpdate(notificationId, updatePayload, options);
   }
 
-  async cancelNotification(notificationId: Config['NotificationIdType']): Promise<void> {
+  /**
+   * Delete the `Communication`.
+   *
+   * Returns no token: a deleted resource keeps none, and there is no version of it left for a
+   * replica to match. A replica handed `options.notificationVersion` deletes its copy just the same.
+   */
+  async cancelNotification(
+    notificationId: Config['NotificationIdType'],
+    _options?: NotificationWriteOptions,
+  ): Promise<void> {
     await this.medplum.deleteResource('Communication', notificationId as string);
   }
 
@@ -1074,8 +1162,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    * overwritten. That refusal is a `NotificationActionError` with reason `CHANGED`.
    *
    * `options.templateVersion` pins the notification in the same update, and
-   * `options.expectedVersion` refuses with `CHANGED`, writing nothing, unless `meta.versionId` is
-   * still that version.
+   * `options.expectedVersion` refuses with `CHANGED`, writing nothing, unless the notification's
+   * version token is still that one (see `assertExpectedVersion`). The update stores a new token,
+   * or `options.notificationVersion` when it copies the primary's.
    */
   async requeueNotification(
     notificationId: Config['NotificationIdType'],
@@ -1110,16 +1199,16 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       sent = options.sendAfter ? options.sendAfter.toISOString() : undefined;
     }
 
+    const identifiers =
+      templateVersion === undefined
+        ? existing.identifier
+        : this.updateIdentifiers(existing.identifier ?? [], {
+            requestedTemplateVersion: templateVersion,
+          });
     const updated: Communication = {
       ...withoutSent,
       ...(sent ? { sent } : {}),
-      ...(templateVersion === undefined
-        ? {}
-        : {
-            identifier: this.updateIdentifiers(existing.identifier ?? [], {
-              requestedTemplateVersion: templateVersion,
-            }),
-          }),
+      identifier: this.withNotificationVersion(identifiers, this.nextNotificationVersion(options)),
       status: NOTIFICATION_STATUS_TO_COMMUNICATION_STATUS.PENDING_SEND,
       meta: {
         ...existing.meta,
@@ -1142,9 +1231,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
    * Pin a notification to a template version, in one update conditional on the version read.
    *
    * Refuses with a `NotificationActionError`, writing nothing: `NOT_FOUND` when there is no such
-   * `Communication`, `CHANGED` when `options.expectedVersion` is not its `meta.versionId` or it
+   * `Communication`, `CHANGED` when `options.expectedVersion` is not its version token or it
    * changes before the update lands (`If-Match`), and `INVALID_STATUS` when it was already sent.
-   * Writes nothing either when it is already pinned to `templateVersion`.
+   * Writes nothing either when it is already pinned to `templateVersion`, unless it is handed the
+   * primary's token and holds another: then the write is the replica catching up, and stores it.
    */
   async repinNotification(
     notificationId: Config['NotificationIdType'],
@@ -1183,16 +1273,21 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
     if (
       this.readTemplateVersion(existing, IDENTIFIER_SYSTEMS.requestedTemplateVersion) ===
-      templateVersion
+        templateVersion &&
+      (options.notificationVersion === undefined ||
+        options.notificationVersion === this.readNotificationVersion(existing))
     ) {
       return this.mapToDatabaseNotification(existing);
     }
 
     const updated: Communication = {
       ...existing,
-      identifier: this.updateIdentifiers(existing.identifier ?? [], {
-        requestedTemplateVersion: templateVersion,
-      }),
+      identifier: this.withNotificationVersion(
+        this.updateIdentifiers(existing.identifier ?? [], {
+          requestedTemplateVersion: templateVersion,
+        }),
+        this.nextNotificationVersion(options),
+      ),
       meta: {
         ...existing.meta,
         lastUpdated: new Date().toISOString(),
@@ -1208,6 +1303,11 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
 
   /**
    * Refuse with `CHANGED` when the caller expected another version than the one just read.
+   *
+   * Compares the version token, not `meta.versionId`, so a token listed from a replica matches the
+   * primary once the replica has caught up. This check alone is not atomic: `updateIfUnchanged`
+   * still sends `If-Match` on the `meta.versionId` that was read, so a write landing between this
+   * read and the update makes the server refuse it.
    */
   private assertExpectedVersion(
     action: 'requeue' | 'repin',
@@ -1215,7 +1315,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     existing: Communication,
     expectedVersion: string | undefined,
   ): void {
-    if (expectedVersion === undefined || existing.meta?.versionId === expectedVersion) {
+    if (
+      expectedVersion === undefined ||
+      this.readNotificationVersion(existing) === expectedVersion
+    ) {
       return;
     }
     throw new NotificationActionError({
@@ -1350,29 +1453,36 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async storeTemplateVersion(
     notificationId: Config['NotificationIdType'],
     templateVersion: number,
-  ): Promise<void> {
+    options?: NotificationWriteOptions,
+  ): Promise<NotificationWriteResult> {
     const existing = await this.medplum.readResource('Communication', notificationId as string);
     const identifiers = (existing.identifier ?? []).filter(
       (identifier) => identifier.system !== IDENTIFIER_SYSTEMS.usedTemplateVersion,
     );
+    const notificationVersion = this.nextNotificationVersion(options);
 
     await this.medplum.updateResource({
       ...existing,
-      identifier: [
-        ...identifiers,
-        {
-          system: IDENTIFIER_SYSTEMS.usedTemplateVersion,
-          value: String(templateVersion),
-        },
-      ],
+      identifier: this.withNotificationVersion(
+        [
+          ...identifiers,
+          {
+            system: IDENTIFIER_SYSTEMS.usedTemplateVersion,
+            value: String(templateVersion),
+          },
+        ],
+        notificationVersion,
+      ),
     });
+    return { notificationVersion };
   }
 
   async storeAdapterAndContextUsed(
     notificationId: Config['NotificationIdType'],
     adapterKey: string,
     context: InputJsonValue,
-  ): Promise<void> {
+    options?: NotificationWriteOptions,
+  ): Promise<NotificationWriteResult> {
     const communication = await this.medplum.readResource(
       'Communication',
       notificationId as string,
@@ -1386,18 +1496,20 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     const existingIdentifiers = (communication.identifier || []).filter(
       (id) => id.system !== IDENTIFIER_SYSTEMS.adapterUsed,
     );
+    const notificationVersion = this.nextNotificationVersion(options);
     const updated: Communication = {
       ...communication,
-      identifier: [
-        ...existingIdentifiers,
-        { system: IDENTIFIER_SYSTEMS.adapterUsed, value: adapterKey },
-      ],
+      identifier: this.withNotificationVersion(
+        [...existingIdentifiers, { system: IDENTIFIER_SYSTEMS.adapterUsed, value: adapterKey }],
+        notificationVersion,
+      ),
       extension: [
         ...existingExtensions,
         { url: contextUsedExtensionUrl, valueString: JSON.stringify(context) },
       ],
     };
     await this.medplum.updateResource(updated);
+    return { notificationVersion };
   }
 
   /* One-off notification methods */
@@ -1406,6 +1518,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     notification: Omit<OneOffNotificationInput<Config>, 'id'> & {
       id?: Config['NotificationIdType'];
     },
+    options?: NotificationWriteOptions,
   ): Promise<DatabaseOneOffNotification<Config>> {
     const notificationWithOptionalFields = notification as Omit<
       OneOffNotificationInput<Config>,
@@ -1473,7 +1586,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       sent: notification.sendAfter?.toISOString(),
       topic: { text: notification.title || undefined },
       payload,
-      identifier: oneOffIdentifiers,
+      identifier: this.withNotificationVersion(
+        oneOffIdentifiers,
+        this.nextNotificationVersion(options),
+      ),
       note: [{ text: JSON.stringify(notification.contextParameters) }],
       extension: [
         {
@@ -1519,6 +1635,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   async persistOneOffNotificationUpdate(
     notificationId: Config['NotificationIdType'],
     notification: Partial<Omit<OneOffNotificationInput<Config>, 'id'>>,
+    options?: NotificationWriteOptions,
   ): Promise<DatabaseOneOffNotification<Config>> {
     const existing = await this.medplum.readResource('Communication', notificationId as string);
     this.assertTenantUnchanged(existing, notification, notificationId);
@@ -1550,7 +1667,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       ...(status === 'FAILED' && { status: 'stopped' }),
       ...(existing.extension && { extension: updatedExtensions }),
       payload: updatedPayload,
-      identifier: updatedIdentifiers,
+      identifier: this.withNotificationVersion(
+        updatedIdentifiers,
+        this.nextNotificationVersion(options),
+      ),
     };
 
     const result = await this.medplum.updateResource(updated);
@@ -1657,16 +1777,16 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   /**
-   * The ID and `meta.versionId` of every notification matching `filter`, ordered by ID.
+   * The ID and version token of every notification matching `filter`, ordered by ID.
    *
-   * Never reads a notification's content: every search asks for `_elements=id,meta`, so the server
-   * returns no recipient, context, context parameters, payload, rendered content or attachment, and
-   * nothing but `{ id, version }` is returned. The filter itself is evaluated by the server, so it
-   * needs no element returned. `meta` carries the version token and the type, context-name and
-   * tenant tags.
+   * Never reads a notification's content: every search asks for `_elements=id,meta,identifier`, so
+   * the server returns no recipient, context, context parameters, payload, rendered content or
+   * attachment, and nothing but `{ id, version }` is returned. The filter itself is evaluated by
+   * the server, so it needs no element returned. `identifier` carries the version token, and `meta`
+   * the `meta.versionId` that stands in for it on a notification written before the token existed.
    *
-   * Filters as `filterNotifications` does, `OR` included. `version` is `meta.versionId`; pass it as
-   * `expectedVersion` to act on the notification only while it is unchanged.
+   * Filters as `filterNotifications` does, `OR` included. Pass `version` as `expectedVersion` to
+   * act on the notification only while it is unchanged.
    */
   async filterNotificationVersions(
     filter: NotificationFilter<Config>,
@@ -1694,7 +1814,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     }
 
     return communications.map((communication) => {
-      const version = communication.meta?.versionId;
+      const version = this.readNotificationVersion(communication);
       if (!communication.id || !version) {
         throw new Error(
           `Medplum returned notification ${String(communication.id)} without a version id`,
@@ -2652,9 +2772,14 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       return !url.includes(attachmentId);
     });
 
+    // The interface hands this write no token to copy, so it always writes as the primary does.
     const updated: Communication = {
       ...communication,
       payload: updatedPayload,
+      identifier: this.withNotificationVersion(
+        communication.identifier,
+        this.nextNotificationVersion(undefined),
+      ),
     };
 
     await this.medplum.updateResource(updated);
