@@ -386,7 +386,9 @@ describe('pending notifications', () => {
       pages.push((await backend.getPendingNotifications(page, 1)).map((n) => n.id));
     }
 
-    expect(pages).toEqual([[expected[0]], [expected[1]], []]);
+    // No sort is asked for, so only which notifications the pages hold is checked, not their order.
+    expect(pages.map((ids) => ids.length)).toEqual([1, 1, 0]);
+    expect(pages.flat().sort()).toEqual(expected);
   });
 
   it('asks the server for one page in one search', async () => {
