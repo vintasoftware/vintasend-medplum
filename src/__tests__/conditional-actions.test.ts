@@ -6,6 +6,14 @@
  * and the Medplum mock client, so `If-Match` and the searches run against a real FHIR repository.
  */
 
+import {
+  type FhirFilterComparison,
+  FhirFilterConnective,
+  type FhirFilterExpression,
+  FhirFilterNegation,
+  matchesSearchRequest,
+  parseFilterParameter,
+} from '@medplum/core';
 import type { Communication } from '@medplum/fhirtypes';
 import { MockClient } from '@medplum/mock';
 import {
@@ -300,6 +308,111 @@ describe('presence filters', () => {
       'fields.hasRequestedTemplateVersion': true,
       'negation.hasRequestedTemplateVersion': true,
     });
+  });
+});
+
+/**
+ * Make the mock client honour `_filter`, which its in-memory repository does not support (it
+ * matches nothing). The expression is parsed and matched with Medplum's own `_filter` parser and
+ * search matcher, and paging is applied after it, as the server's SQL does.
+ */
+function evaluateFilterParameterInMock() {
+  const search = medplum.searchResources.bind(medplum);
+  const matches = (resource: Communication, expression: FhirFilterExpression): boolean => {
+    if (expression instanceof FhirFilterConnective) {
+      const left = matches(resource, expression.left);
+      const right = matches(resource, expression.right);
+      return expression.keyword === 'and' ? left && right : left || right;
+    }
+    if (expression instanceof FhirFilterNegation) {
+      return !matches(resource, expression.child);
+    }
+    const { path: code, operator, value } = expression as FhirFilterComparison;
+    return matchesSearchRequest(resource, {
+      resourceType: 'Communication',
+      filters: [{ code, operator, value }],
+    });
+  };
+
+  return vi.spyOn(medplum, 'searchResources').mockImplementation((async (
+    resourceType: 'Communication',
+    query: Record<string, string> | string[][],
+  ) => {
+    const params = new URLSearchParams(query);
+    const filter = params.get('_filter');
+    if (filter === null) {
+      return search(resourceType, query);
+    }
+    const offset = Number(params.get('_offset') ?? 0);
+    const count = Number(params.get('_count') ?? 20);
+    for (const key of ['_filter', '_offset', '_count']) {
+      params.delete(key);
+    }
+    params.set('_count', '1000');
+    const expression = parseFilterParameter(filter);
+    const all = await search(resourceType, [...params.entries()]);
+    return all.filter((resource) => matches(resource, expression)).slice(offset, offset + count);
+  }) as never);
+}
+
+describe('pending notifications', () => {
+  beforeEach(() => {
+    evaluateFilterParameterInMock();
+  });
+
+  /** Due now: one with no send time, one whose send time has passed. Plus ones that are not. */
+  async function seedMixed() {
+    const unscheduled = await seed({ sendAfter: null });
+    const due = await seed({ sendAfter: PAST });
+    await seed({ sendAfter: FUTURE });
+    await seed({ sendAfter: null, status: 'FAILED' });
+    await seed({ sendAfter: PAST, status: 'SENT' });
+    return [unscheduled, due].sort();
+  }
+
+  it('lists every pending notification, with or without a send time', async () => {
+    const expected = await seedMixed();
+
+    const found = await backend.getAllPendingNotifications();
+
+    expect(found.map((n) => n.id).sort()).toEqual(expected);
+  });
+
+  it('pages through pending notifications, with or without a send time', async () => {
+    const expected = await seedMixed();
+
+    const pages = [];
+    for (let page = 0; page < 3; page += 1) {
+      pages.push((await backend.getPendingNotifications(page, 1)).map((n) => n.id));
+    }
+
+    expect(pages).toEqual([[expected[0]], [expected[1]], []]);
+  });
+
+  it('asks the server for one page in one search', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-11T12:00:00.000Z'), toFake: ['Date'] });
+    try {
+      await backend.getPendingNotifications(2, 25);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(medplum.searchResources).toHaveBeenCalledTimes(1);
+    expect(medplum.searchResources).toHaveBeenCalledWith('Communication', {
+      status: 'in-progress',
+      _tag: MEDPLUM_NOTIFICATION_TAG,
+      _filter: 'sent pr false or sent le 2026-11-11T12:00:00.000Z',
+      _count: '25',
+      _offset: '50',
+    });
+  });
+
+  it('is what sendPendingNotifications sends', async () => {
+    await seedMixed();
+
+    await makeService().sendPendingNotifications();
+
+    expect(adapter.send).toHaveBeenCalledTimes(2);
   });
 });
 

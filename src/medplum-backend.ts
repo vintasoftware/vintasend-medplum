@@ -418,13 +418,29 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     } as DatabaseNotification<Config>;
   }
 
-  async getAllPendingNotifications(): Promise<AnyDatabaseNotification<Config>[]> {
+  /**
+   * Search parameters for pending notifications that are due: no send time, or one that has
+   * passed.
+   *
+   * A FHIR date comparison never matches a resource without the element, so `sent:le` alone skips
+   * notifications with no send time, and plain search parameters cannot OR two conditions on
+   * `sent`. `_filter` can: Medplum compiles `sent pr false or sent le <now>` into one SQL
+   * condition, so the server still does the filtering and the paging.
+   */
+  private duePendingSearchParams(): Record<string, string> {
     const now = new Date().toISOString();
-    const communications = await this.medplum.searchResources('Communication', {
-      status: 'in-progress',
-      _tag: 'notification',
-      'sent:le': now,
-    });
+    return {
+      status: NOTIFICATION_STATUS_TO_COMMUNICATION_STATUS.PENDING_SEND,
+      _tag: MEDPLUM_NOTIFICATION_TAG,
+      _filter: `sent pr false or sent le ${now}`,
+    };
+  }
+
+  async getAllPendingNotifications(): Promise<AnyDatabaseNotification<Config>[]> {
+    const communications = await this.medplum.searchResources(
+      'Communication',
+      this.duePendingSearchParams(),
+    );
     return communications.map((comm) => this.mapToDatabaseNotification(comm));
   }
 
@@ -432,11 +448,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     page: number,
     pageSize: number,
   ): Promise<AnyDatabaseNotification<Config>[]> {
-    const now = new Date().toISOString();
     const communications = await this.medplum.searchResources('Communication', {
-      status: 'in-progress',
-      _tag: 'notification',
-      'sent:le': now,
+      ...this.duePendingSearchParams(),
       _count: pageSize.toString(),
       _offset: (page * pageSize).toString(),
     });
