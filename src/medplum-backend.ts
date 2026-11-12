@@ -54,6 +54,13 @@ import type { MedplumStorageIdentifiers } from './types.js';
 type MedplumNotificationBackendOptions = {
   emailNotificationSubjectExtensionUrl?: string;
   identifier?: string;
+  /**
+   * How many targets `repinNotifications` and `requeueNotifications` handle per search and per
+   * batch request. The search names every ID in its URL, so raising it lengthens the URL; lower it
+   * if a proxy in front of Medplum refuses long ones. A positive integer; defaults to
+   * `DEFAULT_BULK_ACTION_BATCH_SIZE`.
+   */
+  bulkActionBatchSize?: number;
 };
 
 type StringFilterLookup = {
@@ -100,10 +107,10 @@ const VERSION_ELEMENTS = 'id,meta,identifier';
 const BULK_ACTION_ELEMENTS = 'id,meta,identifier,status,sent';
 
 /**
- * How many targets a bulk action handles per search and per batch. The search names every ID in
- * its URL, so this keeps it well under URL length limits.
+ * How many targets a bulk action handles per search and per batch unless `bulkActionBatchSize`
+ * says otherwise: 100 IDs keep the search URL around 4 KB, well under common URL length limits.
  */
-const MAX_BULK_TARGETS_PER_REQUEST = 100;
+export const DEFAULT_BULK_ACTION_BATCH_SIZE = 100;
 
 /** One JSON Patch operation, as a bulk action sends it. */
 type JsonPatchOperation =
@@ -173,6 +180,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   private attachmentManager?: BaseAttachmentManager;
   private logger?: BaseLogger;
   private identifier: string;
+  private bulkActionBatchSize: number;
 
   constructor(
     private medplum: MedplumClient,
@@ -183,6 +191,10 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     },
   ) {
     this.identifier = options.identifier || 'default-medplum';
+    this.bulkActionBatchSize = options.bulkActionBatchSize ?? DEFAULT_BULK_ACTION_BATCH_SIZE;
+    if (!(Number.isInteger(this.bulkActionBatchSize) && this.bulkActionBatchSize > 0)) {
+      throw new RangeError('bulkActionBatchSize must be a positive integer');
+    }
   }
 
   getBackendIdentifier(): string {
@@ -1865,7 +1877,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   /**
    * Pin several notifications to `templateVersion`, without reading any of them in full.
    *
-   * Per 100 targets: one search for their IDs ANDed with `options.filter`, asking only for
+   * Per `bulkActionBatchSize` targets (100 by default): one search for their IDs ANDed with
+   * `options.filter`, asking only for
    * `id,meta,identifier,status,sent`, and one batch of JSON Patch updates, each sent with
    * `If-Match` on the `meta.versionId` that search saw, so a notification written in between is
    * refused (`CHANGED`) instead of overwritten. See `BaseNotificationBackend.repinNotifications`.
@@ -1971,7 +1984,7 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   /**
-   * Check and write a bulk action's targets, `MAX_BULK_TARGETS_PER_REQUEST` at a time.
+   * Check and write a bulk action's targets, `bulkActionBatchSize` at a time.
    *
    * `plan` sees only the elements in `BULK_ACTION_ELEMENTS`, and only for a target that still
    * matches the filter and is at the version the caller expected.
@@ -1983,8 +1996,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   ): Promise<BulkNotificationActionResult<Config>[]> {
     const results = new Map<string, BulkNotificationActionResult<Config>>();
 
-    for (let start = 0; start < targets.length; start += MAX_BULK_TARGETS_PER_REQUEST) {
-      const chunk = targets.slice(start, start + MAX_BULK_TARGETS_PER_REQUEST);
+    for (let start = 0; start < targets.length; start += this.bulkActionBatchSize) {
+      const chunk = targets.slice(start, start + this.bulkActionBatchSize);
       const found = await this.searchBulkTargets(
         chunk.map((target) => target.id),
         filter,

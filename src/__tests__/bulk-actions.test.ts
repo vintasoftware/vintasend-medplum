@@ -20,7 +20,7 @@ import {
   communicationStatusToNotificationStatus,
   MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS,
 } from '../index';
-import { MedplumNotificationBackend } from '../medplum-backend';
+import { DEFAULT_BULK_ACTION_BATCH_SIZE, MedplumNotificationBackend } from '../medplum-backend';
 
 interface TestConfig extends BaseNotificationTypeConfig {
   ContextMap: { testContext: { generate: (params: { p: string }) => Promise<{ v: string }> } };
@@ -266,20 +266,47 @@ describe('repinNotifications', () => {
     expect(results).toEqual([{ id, outcome: 'FAILED' }]);
   });
 
-  it('splits a large batch into requests of 100', async () => {
-    const ids = [];
-    for (let index = 0; index < 101; index += 1) {
-      ids.push(await seed({ requestedTemplateVersion: 1 }));
+  it('splits a large batch into requests of 100 by default', async () => {
+    for (let index = 0; index <= DEFAULT_BULK_ACTION_BATCH_SIZE; index += 1) {
+      await seed({ requestedTemplateVersion: 1 });
     }
     const service = makeService();
     const targets = await service.filterNotificationVersions(WELCOME_MOVABLE, 0, 200);
+    const search = vi.spyOn(medplum, 'searchResources');
+    const batch = vi.spyOn(medplum, 'executeBatch');
+
+    const results = await service.repinNotifications(targets, { templateVersion: V });
+
+    expect(DEFAULT_BULK_ACTION_BATCH_SIZE).toBe(100);
+    expect(results).toHaveLength(101);
+    expect(results.every((result) => result.outcome === 'WRITTEN')).toBe(true);
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(batch).toHaveBeenCalledTimes(2);
+  });
+
+  it('splits by bulkActionBatchSize when it is configured', async () => {
+    backend = new MedplumNotificationBackend<TestConfig>(medplum, { bulkActionBatchSize: 2 });
+    for (let index = 0; index < 5; index += 1) {
+      await seed({ requestedTemplateVersion: 1 });
+    }
+    const service = makeService();
+    const targets = await service.filterNotificationVersions(WELCOME_MOVABLE, 0, 50);
+    const search = vi.spyOn(medplum, 'searchResources');
     const batch = vi.spyOn(medplum, 'executeBatch');
 
     const results = await service.repinNotifications(targets, { templateVersion: V });
 
     expect(results.every((result) => result.outcome === 'WRITTEN')).toBe(true);
-    expect(batch).toHaveBeenCalledTimes(2);
-    expect(ids).toHaveLength(101);
+    expect(search).toHaveBeenCalledTimes(3);
+    expect(batch.mock.calls.map(([bundle]) => bundle.entry?.length)).toEqual([2, 2, 1]);
+  });
+
+  it('refuses a bulkActionBatchSize that is not a positive integer', () => {
+    for (const bulkActionBatchSize of [0, -1, 1.5, Number.NaN]) {
+      expect(
+        () => new MedplumNotificationBackend<TestConfig>(medplum, { bulkActionBatchSize }),
+      ).toThrow(RangeError);
+    }
   });
 
   it('leaves later reads through the same client fresh', async () => {

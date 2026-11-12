@@ -666,6 +666,10 @@ constructor(
   medplum: MedplumClient,
   options?: {
     emailNotificationSubjectExtensionUrl?: string;
+    identifier?: string;
+    // Targets per search and per batch request in repinNotifications/requeueNotifications.
+    // Defaults to DEFAULT_BULK_ACTION_BATCH_SIZE (100).
+    bulkActionBatchSize?: number;
   }
 )
 ```

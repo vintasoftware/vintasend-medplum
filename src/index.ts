@@ -11,6 +11,7 @@ export {
 } from './medplum-adapter.js';
 export { MedplumAttachmentFile, MedplumAttachmentManager } from './medplum-attachment-manager.js';
 export {
+  DEFAULT_BULK_ACTION_BATCH_SIZE,
   MedplumNotificationBackend,
   MedplumNotificationBackendFactory,
 } from './medplum-backend.js';
