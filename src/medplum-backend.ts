@@ -1,5 +1,5 @@
-import { getStatus, type MedplumClient, OperationOutcomeError } from '@medplum/core';
-import type { Attachment, Communication, Media } from '@medplum/fhirtypes';
+import { encodeBase64, getStatus, type MedplumClient, OperationOutcomeError } from '@medplum/core';
+import type { Attachment, BundleEntry, Communication, Media } from '@medplum/fhirtypes';
 import type {
   AnyDatabaseNotification,
   AttachmentFile,
@@ -8,7 +8,10 @@ import type {
   BaseLogger,
   BaseNotificationBackend,
   BaseNotificationTypeConfig,
+  BulkNotificationActionOptions,
+  BulkNotificationActionResult,
   BulkNotificationWriteOptions,
+  BulkRequeueNotificationOptions,
   DatabaseNotification,
   DatabaseOneOffNotification,
   FileAttachment,
@@ -88,6 +91,36 @@ const MAX_SEARCH_PAGE_SIZE = 1000;
  * content.
  */
 const VERSION_ELEMENTS = 'id,meta,identifier';
+
+/**
+ * What the bulk actions ask the server for: what `filterNotificationVersions` reads, plus `status`
+ * to check it, and `sent`, the schedule, which a re-queue moves or clears. Still nothing of the
+ * notification's content.
+ */
+const BULK_ACTION_ELEMENTS = 'id,meta,identifier,status,sent';
+
+/**
+ * How many targets a bulk action handles per search and per batch. The search names every ID in
+ * its URL, so this keeps it well under URL length limits.
+ */
+const MAX_BULK_TARGETS_PER_REQUEST = 100;
+
+/** One JSON Patch operation, as a bulk action sends it. */
+type JsonPatchOperation =
+  | { op: 'add'; path: string; value: unknown }
+  | { op: 'remove'; path: string };
+
+/** What a bulk action decided for one notification it found at the expected version. */
+type BulkActionPlan =
+  | { outcome: 'INVALID_STATUS'; status: NotificationStatus }
+  | { outcome: 'UNCHANGED' }
+  | { patch: JsonPatchOperation[]; version: string };
+
+/** The HTTP status code a batch response entry carries, such as `412` for `"412 Precondition Failed"`. */
+function batchEntryStatus(entry: BundleEntry | undefined): number | undefined {
+  const parsed = Number.parseInt(entry?.response?.status ?? '', 10);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
 
 function cloneSearchParams(params: SearchParams): SearchParams {
   return Object.fromEntries(Object.entries(params).map(([key, values]) => [key, [...values]]));
@@ -230,6 +263,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       'negation.hasSendAfter': true,
       'fields.hasRequestedTemplateVersion': true,
       'negation.hasRequestedTemplateVersion': true,
+      // `_id`, which takes a comma-separated list. Negating it is not offered.
+      'fields.id': true,
+      'negation.id': false,
     };
   }
 
@@ -244,6 +280,8 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       'requeue.expectedVersion': true,
       'requeue.templateVersion': true,
       'versions.filter': true,
+      'repin.bulk': true,
+      'requeue.bulk': true,
     };
   }
 
@@ -1825,6 +1863,229 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   }
 
   /**
+   * Pin several notifications to `templateVersion`, without reading any of them in full.
+   *
+   * Per 100 targets: one search for their IDs ANDed with `options.filter`, asking only for
+   * `id,meta,identifier,status,sent`, and one batch of JSON Patch updates, each sent with
+   * `If-Match` on the `meta.versionId` that search saw, so a notification written in between is
+   * refused (`CHANGED`) instead of overwritten. See `BaseNotificationBackend.repinNotifications`.
+   */
+  async repinNotifications(
+    targets: NotificationVersion<Config>[],
+    templateVersion: number,
+    options: BulkNotificationActionOptions<Config>,
+  ): Promise<BulkNotificationActionResult<Config>[]> {
+    if (!(Number.isInteger(templateVersion) && templateVersion >= 0)) {
+      throw new RangeError(
+        'Cannot repin notifications: templateVersion must be a non-negative integer',
+      );
+    }
+
+    const results = await this.runBulkAction(targets, options.filter, (existing) => {
+      const status = communicationStatusToNotificationStatus(existing.status);
+      if (!REPINNABLE_NOTIFICATION_STATUSES.includes(status)) {
+        return { outcome: 'INVALID_STATUS', status };
+      }
+      if (
+        this.readTemplateVersion(existing, IDENTIFIER_SYSTEMS.requestedTemplateVersion) ===
+        templateVersion
+      ) {
+        return { outcome: 'UNCHANGED' };
+      }
+      const version = this.nextNotificationVersion(undefined);
+      const identifier = this.withNotificationVersion(
+        this.updateIdentifiers(existing.identifier ?? [], {
+          requestedTemplateVersion: templateVersion,
+        }),
+        version,
+      );
+      return { patch: [{ op: 'add', path: '/identifier', value: identifier }], version };
+    });
+
+    this.logger?.info(
+      log`${logCount(results.filter((result) => result.outcome === 'WRITTEN').length)} notifications repinned to template version ${logCount(templateVersion)}`,
+    );
+    return results;
+  }
+
+  /**
+   * Put several notifications back into `PENDING_SEND`, without reading any of them in full.
+   *
+   * Searches and writes as `repinNotifications` does, and changes what `requeueNotification`
+   * changes: the status, `sent` when `options.sendAfter` is given, the template pin when
+   * `options.templateVersion` is, and the version token.
+   */
+  async requeueNotifications(
+    targets: NotificationVersion<Config>[],
+    options: BulkRequeueNotificationOptions<Config>,
+  ): Promise<BulkNotificationActionResult<Config>[]> {
+    const { templateVersion } = options;
+    if (
+      templateVersion !== undefined &&
+      !(Number.isInteger(templateVersion) && templateVersion >= 0)
+    ) {
+      throw new RangeError(
+        'Cannot requeue notifications: templateVersion must be a non-negative integer',
+      );
+    }
+
+    const results = await this.runBulkAction(targets, options.filter, (existing) => {
+      const status = communicationStatusToNotificationStatus(existing.status);
+      if (!REQUEUEABLE_NOTIFICATION_STATUSES.includes(status)) {
+        return { outcome: 'INVALID_STATUS', status };
+      }
+
+      const version = this.nextNotificationVersion(undefined);
+      const identifiers =
+        templateVersion === undefined
+          ? existing.identifier
+          : this.updateIdentifiers(existing.identifier ?? [], {
+              requestedTemplateVersion: templateVersion,
+            });
+      const patch: JsonPatchOperation[] = [
+        {
+          op: 'add',
+          path: '/status',
+          value: NOTIFICATION_STATUS_TO_COMMUNICATION_STATUS.PENDING_SEND,
+        },
+        {
+          op: 'add',
+          path: '/identifier',
+          value: this.withNotificationVersion(identifiers, version),
+        },
+      ];
+      if ('sendAfter' in options) {
+        if (options.sendAfter) {
+          patch.push({ op: 'add', path: '/sent', value: options.sendAfter.toISOString() });
+        } else if (existing.sent !== undefined) {
+          patch.push({ op: 'remove', path: '/sent' });
+        }
+      }
+      return { patch, version };
+    });
+
+    this.logger?.info(
+      log`${logCount(results.filter((result) => result.outcome === 'WRITTEN').length)} notifications requeued`,
+    );
+    return results;
+  }
+
+  /**
+   * Check and write a bulk action's targets, `MAX_BULK_TARGETS_PER_REQUEST` at a time.
+   *
+   * `plan` sees only the elements in `BULK_ACTION_ELEMENTS`, and only for a target that still
+   * matches the filter and is at the version the caller expected.
+   */
+  private async runBulkAction(
+    targets: NotificationVersion<Config>[],
+    filter: NotificationFilter<Config> | undefined,
+    plan: (existing: Communication) => BulkActionPlan,
+  ): Promise<BulkNotificationActionResult<Config>[]> {
+    const results = new Map<string, BulkNotificationActionResult<Config>>();
+
+    for (let start = 0; start < targets.length; start += MAX_BULK_TARGETS_PER_REQUEST) {
+      const chunk = targets.slice(start, start + MAX_BULK_TARGETS_PER_REQUEST);
+      const found = await this.searchBulkTargets(
+        chunk.map((target) => target.id),
+        filter,
+      );
+
+      const entries: BundleEntry[] = [];
+      const written: { id: Config['NotificationIdType']; version: string }[] = [];
+      for (const target of chunk) {
+        const key = String(target.id);
+        const existing = found.get(key);
+        if (!existing) {
+          results.set(key, { id: target.id, outcome: 'NOT_MATCHED' });
+          continue;
+        }
+        if (this.readNotificationVersion(existing) !== target.version) {
+          results.set(key, { id: target.id, outcome: 'CHANGED' });
+          continue;
+        }
+        const versionId = existing.meta?.versionId;
+        if (!versionId) {
+          throw new Error(`Medplum returned notification ${key} without a version id`);
+        }
+
+        const planned = plan(existing);
+        if ('outcome' in planned) {
+          results.set(
+            key,
+            planned.outcome === 'UNCHANGED'
+              ? { id: target.id, outcome: 'UNCHANGED', version: target.version }
+              : { id: target.id, outcome: 'INVALID_STATUS', status: planned.status },
+          );
+          continue;
+        }
+
+        entries.push({
+          request: { method: 'PATCH', url: `Communication/${key}`, ifMatch: `W/"${versionId}"` },
+          resource: {
+            resourceType: 'Binary',
+            contentType: 'application/json-patch+json',
+            data: encodeBase64(JSON.stringify(planned.patch)),
+          },
+        });
+        written.push({ id: target.id, version: planned.version });
+      }
+
+      if (entries.length === 0) {
+        continue;
+      }
+      const response = await this.medplum.executeBatch({
+        resourceType: 'Bundle',
+        type: 'batch',
+        entry: entries,
+      });
+      // `executeBatch` posts to the FHIR base URL, which leaves the client's cached reads of these
+      // notifications, and its cached searches, as they were before the writes.
+      this.medplum.invalidateSearches('Communication');
+
+      written.forEach(({ id, version }, index) => {
+        const key = String(id);
+        this.medplum.invalidateUrl(this.medplum.fhirUrl('Communication', key));
+        const status = batchEntryStatus(response.entry?.[index]);
+        if (status !== undefined && status >= 200 && status < 300) {
+          results.set(key, { id, outcome: 'WRITTEN', version });
+        } else if (status === 412) {
+          results.set(key, { id, outcome: 'CHANGED' });
+        } else if (status === 404 || status === 410) {
+          results.set(key, { id, outcome: 'NOT_MATCHED' });
+        } else {
+          this.logger?.warn(
+            log`Medplum refused the bulk write to notification ${logId(id)} with status ${logCount(status ?? 0)}`,
+          );
+          results.set(key, { id, outcome: 'FAILED' });
+        }
+      });
+    }
+
+    return targets.map(
+      (target) => results.get(String(target.id)) as BulkNotificationActionResult<Config>,
+    );
+  }
+
+  /**
+   * The targets that still match `filter`, by ID, with `BULK_ACTION_ELEMENTS` only.
+   */
+  private async searchBulkTargets(
+    ids: Config['NotificationIdType'][],
+    filter: NotificationFilter<Config> | undefined,
+  ): Promise<Map<string, Communication>> {
+    const byIds: NotificationFilter<Config> = { id: ids };
+    const conjunctions = this.toConjunctions(
+      filter === undefined ? byIds : { and: [filter, byIds] },
+    );
+    const communications = await this.searchUnion(conjunctions, 0, ids.length, {
+      _elements: [BULK_ACTION_ELEMENTS],
+    });
+    return new Map(
+      communications.map((communication) => [String(communication.id), communication]),
+    );
+  }
+
+  /**
    * Rewrite a filter as an OR of ANDs, one set of FHIR search parameters per AND.
    *
    * A filter with no `or` anywhere comes back as one set, so it is searched exactly as before.
@@ -1859,7 +2120,13 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
       return [this.negateFilter((filter as { not: NotificationFilter<Config> }).not)];
     }
 
-    return [this.fieldFilterToFhirParams(filter as NotificationFilterFields<Config>)];
+    const fields = filter as NotificationFilterFields<Config>;
+    // FHIR search cannot ask for "no ID", so a filter on none is a search that is never run, the
+    // way an empty `or` is.
+    if (Array.isArray(fields.id) && fields.id.length === 0) {
+      return [];
+    }
+    return [this.fieldFilterToFhirParams(fields)];
   }
 
   private assertBranchLimit(branches: number): void {
@@ -1972,6 +2239,12 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
   private fieldFilterToFhirParams(filter: NotificationFilterFields<Config>): SearchParams {
     const params: SearchParams = {};
     const add = (key: string, value: string): void => addSearchParam(params, key, value);
+
+    // ID → _id (comma-separated = OR). `toConjunctions` has already handled an empty list.
+    if (filter.id !== undefined) {
+      const ids = Array.isArray(filter.id) ? filter.id : [filter.id];
+      add('_id', ids.map((id) => String(id)).join(','));
+    }
 
     // Status → Communication.status (comma-separated = OR)
     if (filter.status !== undefined) {
@@ -2118,6 +2391,9 @@ export class MedplumNotificationBackend<Config extends BaseNotificationTypeConfi
     }
 
     this.throwIfUnsupportedField(inner);
+    if (inner.id !== undefined) {
+      throw new Error('NOT filters on id are not supported in MedplumNotificationBackend.');
+    }
 
     const params: Record<string, string> = {};
     const filter = inner as NotificationFilterFields<Config>;

@@ -1021,6 +1021,8 @@ describe('capabilities and constants', () => {
       'requeue.expectedVersion': true,
       'requeue.templateVersion': true,
       'versions.filter': true,
+      'repin.bulk': true,
+      'requeue.bulk': true,
     });
   });
 
