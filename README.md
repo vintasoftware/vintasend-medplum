@@ -91,7 +91,8 @@ The implementation maps VintaSend concepts to FHIR resources:
   note: [{ text: '{"userId": "123"}' }],  // contextParameters
   identifier: [
     { system: "http://vintasend.com/fhir/requested-template-version", value: "3" },
-    { system: "http://vintasend.com/fhir/used-template-version", value: "3" }
+    { system: "http://vintasend.com/fhir/used-template-version", value: "3" },
+    { system: "http://vintasend.com/fhir/notification-version", value: "3f0c…" }  // notificationVersion
   ],
   meta: {
     tag: [
@@ -126,6 +127,25 @@ await service.filterNotifications({ requestedTemplateVersion: 3 }, 0, 20);
 // went out on v1 or v2 — the query after finding a bug in an old version
 await service.filterNotifications({ usedTemplateVersion: [1, 2] }, 0, 20);
 ```
+
+#### Version tokens
+
+Every notification carries a version token, `notificationVersion`, in the
+`http://vintasend.com/fhir/notification-version` identifier
+(`MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS.notificationVersion`). When this backend is the primary,
+every write replaces it with a new `crypto.randomUUID()`. When it is an additional backend, VintaSend
+hands it the primary's token and it stores that one as it is, so the same version of a notification
+has the same token on every backend. `meta.versionId` cannot play this part: the server assigns it,
+so a replica cannot copy it.
+
+A `Communication` written before the token existed has no such identifier. Until its next write
+gives it one, its `meta.versionId` stands in as its token, in reads, in
+`filterNotificationVersions` and in the `expectedVersion` check, so a version listed before the
+upgrade still works.
+
+`cancelNotification` deletes the `Communication`, so it returns no token. A `Communication`
+changed without going through the backend keeps its token, so `expectedVersion` does not see that
+change.
 
 #### File Attachments → Binary + Media Resources
 
@@ -528,8 +548,8 @@ const pendingOnAnotherVersion = {
 } as const;
 const failed = { bodyTemplate: 'welcome', status: 'FAILED' } as const;
 
-// IDs and version tokens only: every search asks for `_elements=id,meta`. The OR of both is what
-// an admin is shown as the count.
+// IDs and version tokens only: every search asks for `_elements=id,meta,identifier`. The OR of
+// both is what an admin is shown as the count.
 const toMove = await notificationService.filterNotificationVersions(
   { or: [pendingOnAnotherVersion, failed] },
   0,
@@ -546,12 +566,13 @@ for (const { id, version } of await notificationService.filterNotificationVersio
 }
 ```
 
-* `version` is the `Communication`'s `meta.versionId`. `expectedVersion` makes the backend refuse
-  with `NotificationActionError` reason `CHANGED`, writing nothing, when the notification is at
-  another version.
-* `repinNotification` and `requeueNotification` both write with `If-Match` on the version they
-  read, with or without `expectedVersion`, so a notification that changes between that read and the
-  write is refused with `CHANGED` too, instead of being overwritten.
+* `version` is the notification's [version token](#version-tokens), so one listed from an additional
+  backend works on the primary once that backend has caught up. `expectedVersion` makes the backend
+  refuse with `NotificationActionError` reason `CHANGED`, writing nothing, when the notification is
+  at another version.
+* `repinNotification` and `requeueNotification` both write with `If-Match` on the `meta.versionId`
+  they read, with or without `expectedVersion`, so a notification that changes between that read
+  and the write is refused with `CHANGED` too, instead of being overwritten.
 * `requeueNotification(id, { templateVersion })` changes the status and the
   `requested-template-version` identifier in one update.
 * Moving notifications changes which ones match, so list again from page 0 rather than moving on to

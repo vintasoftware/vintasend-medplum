@@ -94,6 +94,14 @@ async function stored(id: string): Promise<Communication> {
   return medplum.readResource('Communication', id);
 }
 
+/** The version token a stored Communication carries, if any. */
+function tokenOf(resource: Communication): string | undefined {
+  return resource.identifier?.find(
+    (identifier) =>
+      identifier.system === MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS.notificationVersion,
+  )?.value;
+}
+
 /** Spies on every write the mock client offers, to assert that none happened. */
 function spyOnWrites() {
   return [
@@ -175,11 +183,11 @@ describe('filterNotificationVersions', () => {
     expect(listed.map((entry) => entry.id)).toEqual([pendingOnOld, failed].sort());
     for (const entry of listed) {
       expect(Object.keys(entry).sort()).toEqual(['id', 'version']);
-      expect(entry.version).toBe((await stored(entry.id)).meta?.versionId);
+      expect(entry.version).toBe(tokenOf(await stored(entry.id)));
     }
   });
 
-  it('never asks the server for anything but id and meta', async () => {
+  it('never asks the server for anything but id, meta and identifier', async () => {
     await seed({ status: 'FAILED' });
     const search = vi.spyOn(medplum, 'searchResources');
 
@@ -189,7 +197,7 @@ describe('filterNotificationVersions', () => {
     expect(search).toHaveBeenCalled();
     for (const [, params] of search.mock.calls) {
       const elements = (params as string[][]).filter(([key]) => key === '_elements');
-      expect(elements).toEqual([['_elements', 'id,meta']]);
+      expect(elements).toEqual([['_elements', 'id,meta,identifier']]);
     }
   });
 
@@ -205,7 +213,7 @@ describe('filterNotificationVersions', () => {
       ['_sort', '_id'],
       ['_count', '25'],
       ['_offset', '50'],
-      ['_elements', 'id,meta'],
+      ['_elements', 'id,meta,identifier'],
       ['_tag', MEDPLUM_NOTIFICATION_TAG],
     ]);
   });
@@ -452,6 +460,7 @@ describe('requeueNotification', () => {
     const id = await seed({ requestedTemplateVersion: 1, status: 'FAILED' });
     const service = makeService();
     const [listed] = await service.filterNotificationVersions(movableTo(V), 0, 10);
+    const versionId = (await stored(id)).meta?.versionId;
     const update = vi.spyOn(medplum, 'updateResource');
 
     const requeued = await service.requeueNotification(id, {
@@ -460,12 +469,15 @@ describe('requeueNotification', () => {
       send: false,
     });
 
+    // The token is what was expected; If-Match is on the server's version id of what was read.
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0]?.[1]).toMatchObject({
-      headers: { 'If-Match': `W/"${listed?.version}"` },
+      headers: { 'If-Match': `W/"${versionId}"` },
     });
     expect(requeued).toMatchObject({ status: 'PENDING_SEND', requestedTemplateVersion: V });
     const resource = await stored(id);
+    expect(tokenOf(resource)).not.toBe(listed?.version);
+    expect(requeued.notificationVersion).toBe(tokenOf(resource));
     expect(resource.status).toBe('in-progress');
     expect(resource.identifier).toContainEqual({
       system: MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS.requestedTemplateVersion,
@@ -555,14 +567,18 @@ describe('requeueNotification', () => {
 describe('repinNotification', () => {
   it('re-pins with If-Match on the version it read', async () => {
     const id = await seed({ sendAfter: FUTURE, requestedTemplateVersion: 1 });
-    const version = (await stored(id)).meta?.versionId;
+    const before = await stored(id);
     const update = vi.spyOn(medplum, 'updateResource');
 
-    const repinned = await makeService().repinNotification(id, { expectedVersion: version });
+    const repinned = await makeService().repinNotification(id, {
+      expectedVersion: tokenOf(before),
+    });
 
     expect(repinned.requestedTemplateVersion).toBe(V);
     expect(update).toHaveBeenCalledTimes(1);
-    expect(update.mock.calls[0]?.[1]).toMatchObject({ headers: { 'If-Match': `W/"${version}"` } });
+    expect(update.mock.calls[0]?.[1]).toMatchObject({
+      headers: { 'If-Match': `W/"${before.meta?.versionId}"` },
+    });
   });
 
   it('uses If-Match without an expected version too', async () => {
@@ -580,7 +596,7 @@ describe('repinNotification', () => {
 
   it('refuses CHANGED for a stale expected version, writing nothing', async () => {
     const id = await seed({ sendAfter: FUTURE, requestedTemplateVersion: 1 });
-    const listed = (await stored(id)).meta?.versionId;
+    const listed = tokenOf(await stored(id));
     await backend.persistNotificationUpdate(id, { title: 'Edited' } as never);
     const before = await stored(id);
     const writes = spyOnWrites();
@@ -608,7 +624,7 @@ describe('repinNotification', () => {
 
   it('writes nothing when the notification is already on that version', async () => {
     const id = await seed({ sendAfter: FUTURE, requestedTemplateVersion: V });
-    const version = (await stored(id)).meta?.versionId;
+    const version = tokenOf(await stored(id));
     const writes = spyOnWrites();
 
     const repinned = await makeService().repinNotification(id, { expectedVersion: version });
@@ -632,6 +648,372 @@ describe('repinNotification', () => {
   });
 });
 
+/**
+ * The version token: generated by the primary on every write, copied as it is by a replica, and
+ * what `filterNotificationVersions` lists and `expectedVersion` is checked against.
+ */
+describe('notification version tokens', () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  const oneOffInput = {
+    emailOrPhone: 'someone@example.com',
+    firstName: 'Some',
+    lastName: 'One',
+    notificationType: 'EMAIL',
+    title: 'Hi',
+    bodyTemplate: 'welcome',
+    contextName: 'testContext',
+    contextParameters: { p: 'x' },
+    sendAfter: null,
+    subjectTemplate: null,
+    extraParams: null,
+  } as never;
+
+  /** The tokens a resource carries: always exactly one, once it has been written. */
+  async function tokensOf(id: string): Promise<string[]> {
+    return ((await stored(id)).identifier ?? [])
+      .filter(
+        (identifier) =>
+          identifier.system === MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS.notificationVersion,
+      )
+      .map((identifier) => identifier.value as string);
+  }
+
+  /** Strip the token, as a Communication written before tokens existed would be stored. */
+  async function makeLegacy(id: string): Promise<Communication> {
+    const resource = await stored(id);
+    return medplum.updateResource({
+      ...resource,
+      identifier: resource.identifier?.filter(
+        (identifier) =>
+          identifier.system !== MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS.notificationVersion,
+      ),
+    });
+  }
+
+  it('generates a new token on every write made without one', async () => {
+    const created = await backend.persistNotification({
+      userId: 'Patient/user-1',
+      notificationType: 'EMAIL',
+      title: 'Hi',
+      bodyTemplate: 'welcome',
+      contextName: 'testContext',
+      contextParameters: { p: 'x' },
+      sendAfter: null,
+      subjectTemplate: null,
+      extraParams: null,
+    } as never);
+    const id = created.id;
+    const seen = [created.notificationVersion];
+    expect(await tokensOf(id)).toEqual([created.notificationVersion]);
+
+    const writes: (() => Promise<{ notificationVersion?: string } | undefined>)[] = [
+      () => backend.persistNotificationUpdate(id, { title: 'Edited' } as never),
+      () => backend.storeAdapterAndContextUsed(id, 'test-adapter', { v: 'x' }),
+      () => backend.storeTemplateVersion(id, 3),
+      () => backend.markAsSent(id, true),
+      () => backend.markAsRead(id, true),
+    ];
+    for (const write of writes) {
+      const token = (await write())?.notificationVersion;
+      expect(await tokensOf(id)).toEqual([token]);
+      seen.push(token);
+    }
+
+    for (const token of seen) {
+      expect(token).toMatch(UUID);
+    }
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it('generates a new token on failure, re-queue, re-pin and attachment removal', async () => {
+    const id = await seed();
+    const seen = [tokenOf(await stored(id))];
+
+    seen.push((await backend.markAsFailed(id, true)).notificationVersion);
+    seen.push((await backend.repinNotification(id, V, {})).notificationVersion);
+    seen.push((await backend.requeueNotification(id, {})).notificationVersion);
+    const resource = await stored(id);
+    await medplum.updateResource({
+      ...resource,
+      payload: [...(resource.payload ?? []), { contentAttachment: { url: 'Binary/file-1' } }],
+    });
+    await backend.deleteNotificationAttachment(id, 'file-1');
+    seen.push(tokenOf(await stored(id)));
+
+    for (const token of seen) {
+      expect(token).toMatch(UUID);
+    }
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it('stores exactly the token it is handed, on every write', async () => {
+    const created = await backend.persistNotification(
+      {
+        userId: 'Patient/user-1',
+        notificationType: 'EMAIL',
+        title: 'Hi',
+        bodyTemplate: 'welcome',
+        contextName: 'testContext',
+        contextParameters: { p: 'x' },
+        sendAfter: null,
+        subjectTemplate: null,
+        extraParams: null,
+      } as never,
+      { notificationVersion: 'primary-1' },
+    );
+    const id = created.id;
+    expect(created.notificationVersion).toBe('primary-1');
+    expect(await tokensOf(id)).toEqual(['primary-1']);
+
+    const writes: [string, () => Promise<{ notificationVersion?: string } | undefined>][] = [
+      [
+        'primary-2',
+        () =>
+          backend.persistNotificationUpdate(id, { title: 'Edited' } as never, {
+            notificationVersion: 'primary-2',
+          }),
+      ],
+      [
+        'primary-3',
+        () =>
+          backend.storeAdapterAndContextUsed(
+            id,
+            'test-adapter',
+            { v: 'x' },
+            { notificationVersion: 'primary-3' },
+          ),
+      ],
+      [
+        'primary-4',
+        () => backend.storeTemplateVersion(id, 3, { notificationVersion: 'primary-4' }),
+      ],
+      ['primary-5', () => backend.markAsFailed(id, true, { notificationVersion: 'primary-5' })],
+      ['primary-6', () => backend.repinNotification(id, V, { notificationVersion: 'primary-6' })],
+      ['primary-7', () => backend.requeueNotification(id, { notificationVersion: 'primary-7' })],
+      ['primary-8', () => backend.markAsSent(id, true, { notificationVersion: 'primary-8' })],
+      ['primary-9', () => backend.markAsRead(id, true, { notificationVersion: 'primary-9' })],
+    ];
+    for (const [token, write] of writes) {
+      expect((await write())?.notificationVersion).toBe(token);
+      expect(await tokensOf(id)).toEqual([token]);
+      expect((await backend.getNotification(id, false))?.notificationVersion).toBe(token);
+    }
+  });
+
+  it('stores a handed token on re-pin even when the pin already matches', async () => {
+    const id = await seed({ sendAfter: FUTURE, requestedTemplateVersion: V });
+
+    const repinned = await backend.repinNotification(id, V, { notificationVersion: 'caught-up' });
+
+    expect(repinned.notificationVersion).toBe('caught-up');
+    expect(await tokensOf(id)).toEqual(['caught-up']);
+    expect(repinned.requestedTemplateVersion).toBe(V);
+  });
+
+  it('stores the handed token on a one-off notification too', async () => {
+    const created = await backend.persistOneOffNotification(oneOffInput, {
+      notificationVersion: 'one-off-1',
+    });
+    expect(created.notificationVersion).toBe('one-off-1');
+    expect(await tokensOf(created.id)).toEqual(['one-off-1']);
+
+    const updated = await backend.persistOneOffNotificationUpdate(
+      created.id,
+      { title: 'Edited' } as never,
+      { notificationVersion: 'one-off-2' },
+    );
+    expect(updated.notificationVersion).toBe('one-off-2');
+    expect(await tokensOf(created.id)).toEqual(['one-off-2']);
+
+    const fresh = await backend.persistOneOffNotificationUpdate(created.id, {
+      title: 'Again',
+    } as never);
+    expect(fresh.notificationVersion).toMatch(UUID);
+    expect((await backend.getOneOffNotification(created.id, false))?.notificationVersion).toBe(
+      fresh.notificationVersion,
+    );
+  });
+
+  it('stores bulk tokens by index, generating one where none is given', async () => {
+    const input = {
+      userId: 'Patient/user-1',
+      notificationType: 'EMAIL',
+      title: 'Hi',
+      bodyTemplate: 'welcome',
+      contextName: 'testContext',
+      contextParameters: { p: 'x' },
+      sendAfter: null,
+      subjectTemplate: null,
+      extraParams: null,
+    } as never;
+
+    const ids = await backend.bulkPersistNotifications([input, input, input], {
+      notificationVersions: ['bulk-1', undefined, 'bulk-3'],
+    });
+    const unreplicated = await backend.bulkPersistNotifications([input, input]);
+
+    expect(await tokensOf(ids[0] as string)).toEqual(['bulk-1']);
+    expect((await tokensOf(ids[1] as string))[0]).toMatch(UUID);
+    expect(await tokensOf(ids[2] as string)).toEqual(['bulk-3']);
+    const [first, second] = await Promise.all(unreplicated.map((id) => tokensOf(id)));
+    expect(first?.[0]).toMatch(UUID);
+    expect(second?.[0]).toMatch(UUID);
+    expect(first?.[0]).not.toBe(second?.[0]);
+  });
+
+  it('returns no token from a cancel, which deletes the notification', async () => {
+    const id = await seed({ sendAfter: FUTURE });
+
+    expect(
+      await backend.cancelNotification(id, { notificationVersion: 'ignored' }),
+    ).toBeUndefined();
+    expect(await backend.getNotification(id, false)).toBeNull();
+  });
+
+  it('lists the stored token from filterNotificationVersions', async () => {
+    const id = await seed({ status: 'FAILED' });
+    await backend.persistNotificationUpdate(id, { title: 'Edited' } as never, {
+      notificationVersion: 'replicated',
+    });
+
+    expect(await backend.filterNotificationVersions({ status: 'FAILED' }, 0, 10)).toEqual([
+      { id, version: 'replicated' },
+    ]);
+  });
+
+  it('copies the snapshot token when a replication snapshot is applied', async () => {
+    const id = await seed({ status: 'FAILED' });
+    const snapshot = await backend.getNotification(id, false);
+    const replica = new MedplumNotificationBackend<TestConfig>(new MockClient());
+
+    expect(await replica.applyReplicationSnapshotIfNewer(snapshot as never)).toEqual({
+      applied: true,
+    });
+
+    expect((await replica.getNotification(id, false))?.notificationVersion).toBe(
+      snapshot?.notificationVersion,
+    );
+  });
+
+  describe('a token listed from a replica, acted on at the primary', () => {
+    let replica: MedplumNotificationBackend<TestConfig>;
+
+    /** Create on the primary and copy each write to the replica the way VintaSend does. */
+    async function seedReplicated(): Promise<string> {
+      const input = {
+        userId: 'Patient/user-1',
+        notificationType: 'EMAIL',
+        title: 'Hi',
+        bodyTemplate: 'welcome',
+        contextName: 'testContext',
+        contextParameters: { p: 'x' },
+        sendAfter: FUTURE,
+        subjectTemplate: null,
+        extraParams: null,
+        requestedTemplateVersion: 1,
+      };
+      const created = await backend.persistNotification(input as never);
+      await replica.persistNotification({ ...input, id: created.id } as never, {
+        notificationVersion: created.notificationVersion,
+      });
+      const failed = await backend.markAsFailed(created.id, true);
+      await replica.markAsFailed(created.id, true, {
+        notificationVersion: failed.notificationVersion,
+      });
+      return created.id;
+    }
+
+    beforeEach(() => {
+      replica = new MedplumNotificationBackend<TestConfig>(new MockClient());
+    });
+
+    it('matches once the replica has caught up', async () => {
+      const id = await seedReplicated();
+      const [listed] = await replica.filterNotificationVersions(movableTo(V), 0, 10);
+      expect(listed?.version).toBe(tokenOf(await stored(id)));
+
+      const requeued = await backend.requeueNotification(id, {
+        templateVersion: V,
+        expectedVersion: listed?.version,
+      });
+
+      expect(requeued).toMatchObject({ status: 'PENDING_SEND', requestedTemplateVersion: V });
+    });
+
+    it('refuses CHANGED while the replica lags behind, writing nothing', async () => {
+      const id = await seedReplicated();
+      const [listed] = await replica.filterNotificationVersions(movableTo(V), 0, 10);
+      await backend.persistNotificationUpdate(id, { title: 'Edited' } as never); // not replicated
+      const before = await stored(id);
+      const writes = spyOnWrites();
+
+      await expectActionError(
+        backend.repinNotification(id, V, { expectedVersion: listed?.version }),
+        'CHANGED',
+      );
+
+      expectNoWrites(writes);
+      expect(await stored(id)).toEqual(before);
+    });
+  });
+
+  it('still refuses CHANGED when a write lands between the token check and the update', async () => {
+    const id = await seed({ status: 'FAILED' });
+    const read = await stored(id);
+    await backend.persistNotificationUpdate(id, { title: 'Written by someone else' } as never);
+    vi.spyOn(medplum, 'readResource').mockResolvedValueOnce(read as never);
+
+    // The token read matches, but If-Match names the server version that has since moved on.
+    await expectActionError(
+      backend.requeueNotification(id, { expectedVersion: tokenOf(read) }),
+      'CHANGED',
+    );
+
+    expect((await stored(id)).status).toBe('stopped');
+  });
+
+  describe('on a Communication written before tokens existed', () => {
+    it('reads and lists meta.versionId as the token', async () => {
+      const id = await seed({ status: 'FAILED' });
+      const legacy = await makeLegacy(id);
+
+      expect((await backend.getNotification(id, false))?.notificationVersion).toBe(
+        legacy.meta?.versionId,
+      );
+      expect(await backend.filterNotificationVersions({ status: 'FAILED' }, 0, 10)).toEqual([
+        { id, version: legacy.meta?.versionId },
+      ]);
+    });
+
+    it('accepts meta.versionId as expectedVersion, and gives it a token on that write', async () => {
+      const id = await seed({ status: 'FAILED' });
+      const legacy = await makeLegacy(id);
+
+      await backend.requeueNotification(id, { expectedVersion: legacy.meta?.versionId });
+
+      const tokens = await tokensOf(id);
+      expect(tokens).toHaveLength(1);
+      expect(tokens[0]).toMatch(UUID);
+      expect(tokens[0]).not.toBe(legacy.meta?.versionId);
+    });
+
+    it('refuses CHANGED for a stale meta.versionId, writing nothing', async () => {
+      const id = await seed({ sendAfter: FUTURE, requestedTemplateVersion: 1 });
+      const legacy = await makeLegacy(id);
+      await medplum.updateResource({ ...legacy, topic: { text: 'Edited' } });
+      const writes = spyOnWrites();
+
+      await expectActionError(
+        backend.repinNotification(id, V, { expectedVersion: legacy.meta?.versionId }),
+        'CHANGED',
+      );
+
+      expectNoWrites(writes);
+    });
+  });
+});
+
 describe('capabilities and constants', () => {
   it('reports every optional action', async () => {
     expect(await makeService().getBackendSupportedActionCapabilities()).toEqual({
@@ -651,6 +1033,10 @@ describe('capabilities and constants', () => {
       expect.arrayContaining([
         { system: MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS.bodyTemplate, value: 'welcome' },
         { system: MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS.requestedTemplateVersion, value: '3' },
+        {
+          system: MEDPLUM_NOTIFICATION_IDENTIFIER_SYSTEMS.notificationVersion,
+          value: expect.any(String),
+        },
       ]),
     );
   });
